@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 
+import {
+  canSubmitRequestType,
+  getRequestTypeHelpText,
+  getRequestTypeLabel,
+} from "./capabilities.js";
 import { getStageAspectRatio, getStyleSummary } from "./presentation.js";
 import { deriveResultView } from "./result-view.js";
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:3100";
-
-const requestTypeLabels = {
-  text_to_image: "文生图",
-  text_to_video: "文生视频",
-};
 
 const styleLabels = {
   cinematic: "电影感",
@@ -29,7 +29,7 @@ function buildAssetUrl(asset) {
 }
 
 function formatRequestType(value) {
-  return requestTypeLabels[value] || "创作结果";
+  return getRequestTypeLabel(value);
 }
 
 async function request(path, options = {}) {
@@ -81,6 +81,14 @@ export function App() {
     [formState, latestAsset],
   );
   const styleSummary = useMemo(() => getStyleSummary(formState.styleCode), [formState.styleCode]);
+  const requestTypeHelpText = useMemo(
+    () => getRequestTypeHelpText(formState.requestType),
+    [formState.requestType],
+  );
+  const canSubmitCurrentRequestType = useMemo(
+    () => canSubmitRequestType(formState.requestType),
+    [formState.requestType],
+  );
   const resultView = useMemo(
     () =>
       deriveResultView({
@@ -228,6 +236,10 @@ export function App() {
       setErrorMessage("请输入创作描述");
       return;
     }
+    if (!canSubmitCurrentRequestType) {
+      setErrorMessage(requestTypeHelpText);
+      return;
+    }
 
     try {
       setIsSubmitting(true);
@@ -273,8 +285,8 @@ export function App() {
             <span className="hero-eyebrow">AI 内容生成</span>
             <span className="hero-chip">{formatRequestType(formState.requestType)}</span>
           </div>
-          <h1>输入文本，直接生成图片或视频</h1>
-          <p>保留最核心的创作输入和最终结果展示，让界面更像一块沉浸式创作工作台。</p>
+          <h1>输入文本，生成图片结果</h1>
+          <p>当前版本先把真实图片生成闭环做稳，视频生成保留为实验入口。</p>
         </div>
 
         <div className="hero-side">
@@ -313,16 +325,17 @@ export function App() {
                   type="button"
                   onClick={() => setFormState((current) => ({ ...current, requestType: "text_to_image" }))}
                 >
-                  文生图
+                  {formatRequestType("text_to_image")}
                 </button>
                 <button
                   className={`segment-button ${formState.requestType === "text_to_video" ? "is-active" : ""}`}
                   type="button"
                   onClick={() => setFormState((current) => ({ ...current, requestType: "text_to_video" }))}
                 >
-                  文生视频
+                  {formatRequestType("text_to_video")}
                 </button>
               </div>
+              <p className="control-hint">{requestTypeHelpText}</p>
             </div>
 
             <div className="field-row">
@@ -372,9 +385,15 @@ export function App() {
               />
             </label>
 
-            <button className="generate-button" type="submit" disabled={isSubmitting || isLoading}>
+            <button
+              className="generate-button"
+              type="submit"
+              disabled={isSubmitting || isLoading || !canSubmitCurrentRequestType}
+            >
               <span className="generate-button-glow" />
-              <span className="generate-button-text">{isSubmitting ? "提交中" : "开始生成"}</span>
+              <span className="generate-button-text">
+                {canSubmitCurrentRequestType ? (isSubmitting ? "提交中" : "开始生成") : "视频实验中"}
+              </span>
             </button>
           </form>
 

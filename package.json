@@ -22,6 +22,7 @@
     "stack:smoke": "powershell -ExecutionPolicy Bypass -File scripts/smoke-local-stack.ps1",
     "stack:smoke:image": "powershell -ExecutionPolicy Bypass -File scripts/smoke-local-stack.ps1 -RequestType text_to_image",
     "stack:smoke:video": "powershell -ExecutionPolicy Bypass -File scripts/smoke-local-stack.ps1 -RequestType text_to_video",
+    "mvp:check": "powershell -ExecutionPolicy Bypass -File scripts/check-mvp.ps1",
     "modelscope:probe-video": "node scripts/modelscope-video-probe.js",
     "test:probe-video": "node --test scripts/modelscope-video-probe.test.js",
     "db:init": "node scripts/init-postgres.js",

@@ -1,0 +1,79 @@
+$ErrorActionPreference = "Stop"
+
+$rootDir = Split-Path -Parent $PSScriptRoot
+
+function Invoke-Step {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$Name,
+    [Parameter(Mandatory = $true)]
+    [scriptblock]$Command
+  )
+
+  Write-Host ""
+  Write-Host "==> $Name"
+  & $Command
+  if ($LASTEXITCODE -ne 0) {
+    throw "Step failed: $Name"
+  }
+}
+
+Invoke-Step "python orchestrator tests" {
+  Push-Location (Join-Path $rootDir "apps/ai-orchestrator")
+  try {
+    py -m unittest discover -s tests
+  } finally {
+    Pop-Location
+  }
+}
+
+Invoke-Step "node service and ui tests" {
+  Push-Location $rootDir
+  try {
+    node --test `
+      apps/api-server/src/services/creation-request-service.test.js `
+      apps/api-server/src/services/task-event-service.test.js `
+      apps/studio-web/src/capabilities.test.js `
+      apps/studio-web/src/presentation.test.js `
+      apps/studio-web/src/result-view.test.js `
+      scripts/modelscope-video-probe.test.js
+  } finally {
+    Pop-Location
+  }
+}
+
+Invoke-Step "studio web build" {
+  Push-Location $rootDir
+  try {
+    npm --workspace apps/studio-web run build
+  } finally {
+    Pop-Location
+  }
+}
+
+Invoke-Step "git ignore guard" {
+  Push-Location $rootDir
+  try {
+    if (Test-Path ".git") {
+      $ignoredPaths = @(
+        ".local-stack/ai-orchestrator-run.ps1",
+        "data/platform-db.json",
+        "storage/generated/wf_b80bb3bc8b6a.png",
+        "rag.db",
+        "server.out.log"
+      )
+
+      foreach ($path in $ignoredPaths) {
+        git check-ignore -q $path
+        if ($LASTEXITCODE -ne 0) {
+          throw "Path is not ignored: $path"
+        }
+      }
+    }
+  } finally {
+    Pop-Location
+  }
+}
+
+Write-Host ""
+Write-Host "MVP check passed."

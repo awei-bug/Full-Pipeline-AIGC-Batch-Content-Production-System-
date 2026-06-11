@@ -1,91 +1,135 @@
-# 智能内容创作平台 MVP
+# AI 内容创作平台 MVP
 
-这是一个可运行的智能内容创作平台最小版本，支持用户输入提示词后创建异步生成任务，并把生成结果保存到作品列表。
+这是一个面向 AI 内容生产的最小可用版本。当前目标不是完整商业化平台，而是先把“输入文本 -> 调用真实模型 -> 生成图片 -> 页面展示和保存作品记录”这条链路跑稳。
 
-## 当前能力
+## 当前真实能力
 
-- 图片生成：已接入魔塔社区接口。配置 `MODELSCOPE_API_TOKEN` 后，图片任务会调用真实图片生成模型。
-- 视频生成：当前是本地动图预览链路，用于跑通任务、额度、作品和资源流程；还不是已接入的真实视频生成模型。
-- 数据存储：配置 PostgreSQL 后写入数据库；未配置时使用本地 JSON 文件。
-- 资源存储：生成文件保存到 `storage/assets`。
-- 前端页面：提供中文创作表单、任务进度和作品列表。
+- 文生图：已接入魔塔社区 API。配置 `MODELSCOPE_API_TOKEN` 后，可以生成真实图片并保存到本地资源目录。
+- 文生视频：保留前端入口，但标记为“实验中”。当前魔塔视频 API 能创建部分任务，但还没有稳定拿到可播放视频文件，因此不作为 MVP 主流程。
+- 前端：React 中文创作界面，只保留输入文本、选择风格/比例、展示最终图片结果。
+- API 服务：Express/Fastify 风格的 Node 服务，负责项目、任务、作品、资产记录。
+- AI 编排器：FastAPI + LangGraph，负责调用 ModelScope 并回调 API 服务。
+- 数据库：支持 PostgreSQL；未配置时仍有本地开发数据能力。
 
-## 启动
+## 本地启动
 
-```bash
+先安装依赖：
+
+```powershell
+cd F:\Python_code\content_create
 npm install
-npm start
 ```
 
-打开：
+配置魔塔令牌。令牌不要写入代码或提交到 Git：
+
+```powershell
+[Environment]::SetEnvironmentVariable("MODELSCOPE_API_TOKEN", "你的魔塔令牌", "User")
+```
+
+重新打开 PowerShell 后确认：
+
+```powershell
+$env:MODELSCOPE_API_TOKEN
+```
+
+启动本地三服务：
+
+```powershell
+npm run stack:start
+```
+
+打开前端：
 
 ```text
-http://127.0.0.1:3000
+http://127.0.0.1:5173
 ```
 
-## PostgreSQL 配置
+停止服务：
 
-支持两种数据库配置方式。
-
-方式一：
-
-```bash
-DATABASE_URL=postgres://postgres:your_password@127.0.0.1:5432/ai_content_platform
+```powershell
+npm run stack:stop
 ```
 
-方式二：
+## 最低验收
 
-```bash
-PGHOST=127.0.0.1
-PGPORT=5432
-PGUSER=postgres
-PGPASSWORD=your_password
-PGDATABASE=ai_content_platform
+每次提交前先跑：
+
+```powershell
+npm run mvp:check
 ```
 
-初始化表结构：
+这个命令会执行：
 
-```bash
+- Python 编排器单元测试
+- Node API 和前端纯逻辑测试
+- 前端生产构建
+- Git 忽略规则守卫，避免本地密钥、数据库、日志和生成文件进仓库
+
+如果要验证真实图片生成链路，先启动服务，然后跑：
+
+```powershell
+npm run stack:smoke:image
+```
+
+视频链路目前只做探测，不作为成功验收标准：
+
+```powershell
+npm run modelscope:probe-video -- --poll-seconds 0
+```
+
+## PostgreSQL
+
+创建数据库：
+
+```powershell
+psql -h 127.0.0.1 -U postgres -d postgres -c "CREATE DATABASE ai_content_platform;"
+```
+
+设置连接变量：
+
+```powershell
+$env:PGHOST="127.0.0.1"
+$env:PGPORT="5432"
+$env:PGUSER="postgres"
+$env:PGPASSWORD="你的数据库密码"
+$env:PGDATABASE="ai_content_platform"
+```
+
+初始化表：
+
+```powershell
 npm run db:init
 ```
 
-清空已生成任务和作品，保留账户额度：
+## 代码边界
 
-```bash
-npm run data:reset
+当前代码已经覆盖 MVP 底座，但还不是完整平台。尚未完成的能力包括：
+
+- 用户登录、权限和团队空间
+- 真实计费、配额和订单
+- 剧本工坊、角色设计、分镜生成
+- 多智能体协作工作台
+- 稳定真实文生视频 provider
+- 云端对象存储和生产级部署流水线
+
+## GitHub
+
+本地仓库：
+
+```text
+F:\Python_code\content_create
 ```
 
-## 魔塔图片生成配置
+远程仓库：
 
-启动服务前设置：
-
-```bash
-MODELSCOPE_API_TOKEN=your_modelscope_token
-MODELSCOPE_IMAGE_MODEL=Qwen/Qwen-Image
-IMAGE_PROVIDER_MODE=auto
+```text
+https://github.com/xw2839652081/project
 ```
 
-模式说明：
+常用提交：
 
-- `auto`：有魔塔令牌时优先调用魔塔，失败后使用本地预览兜底。
-- `modelscope`：强制优先调用魔塔，运行失败后仍使用本地预览兜底。
-- `local`：只使用本地预览生成器。
-
-令牌不要写进代码或提交到仓库。建议放到系统环境变量，再由启动进程读取。
-
-## 核心接口
-
-- `GET /api/v1/health`
-- `GET /api/v1/users/me`
-- `POST /api/v1/creations/images`
-- `POST /api/v1/creations/videos`
-- `GET /api/v1/creations/:creationRequestId`
-- `GET /api/v1/tasks/:taskId`
-- `GET /api/v1/works`
-- `POST /api/v1/works/:workId/regenerate`
-
-## 能力边界
-
-图片功能已经是真实落地能力：用户输入提示词后会通过魔塔图片模型生成真实图片结果。
-
-视频功能当前只完成平台流程和本地预览，不是生产级真实视频生成。要落地真实视频，需要继续接入一个可用的视频生成 API，并按现有 provider 接口新增视频供应商实现。
+```powershell
+git add .
+git commit -m "说明本次改动"
+git push
+```
