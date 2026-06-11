@@ -15,6 +15,10 @@ class Settings(BaseModel):
     modelscope_image_model: str = "Qwen/Qwen-Image"
     modelscope_video_model: str = "Wan-AI/Wan2.1-T2V-1.3B"
     modelscope_data_inspection: str | None = '{"input":false,"output":false}'
+    openai_api_key: str | None = None
+    openai_base_url: str = "https://api.openai.com/v1"
+    openai_video_model: str = "sora-2"
+    video_provider: str = "modelscope"
     callback_base_url: str | None = None
     assets_dir: Path = Path("storage/generated")
     create_timeout_sec: float = 30.0
@@ -33,6 +37,13 @@ class Settings(BaseModel):
                 os.getenv("LOCAL_ASSETS_DIR", "storage/generated"),
             )
         )
+        openai_api_key = os.getenv("OPENAI_API_KEY")
+        video_provider = (
+            os.getenv("AI_VIDEO_PROVIDER")
+            or os.getenv("VIDEO_PROVIDER")
+            or ("openai" if openai_api_key else "modelscope")
+        )
+
         return cls(
             modelscope_api_token=os.getenv("MODELSCOPE_API_TOKEN"),
             modelscope_base_url=os.getenv(
@@ -54,6 +65,13 @@ class Settings(BaseModel):
                 ).strip()
                 or None
             ),
+            openai_api_key=openai_api_key,
+            openai_base_url=os.getenv(
+                "OPENAI_BASE_URL",
+                "https://api.openai.com/v1",
+            ).rstrip("/"),
+            openai_video_model=os.getenv("OPENAI_VIDEO_MODEL", "sora-2"),
+            video_provider=video_provider.strip().lower(),
             callback_base_url=os.getenv("API_SERVER_BASE_URL", "").rstrip("/") or None,
             assets_dir=assets_dir,
             create_timeout_sec=float(os.getenv("AI_CREATE_TIMEOUT_SEC", "30")),

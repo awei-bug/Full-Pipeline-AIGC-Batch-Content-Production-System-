@@ -14,7 +14,7 @@ from ..models import (
     WorkflowRequest,
     WorkflowRunState,
 )
-from ..providers.modelscope import ModelScopeProvider
+from ..providers.generation_provider import GenerationProvider
 from .callback_client import CallbackClient
 
 
@@ -41,12 +41,12 @@ class OrchestrationService:
     def __init__(
         self,
         settings: Settings,
-        provider: ModelScopeProvider | None = None,
+        provider: GenerationProvider | None = None,
         callback_client: CallbackClient | None = None,
         store: WorkflowStore | None = None,
     ) -> None:
         self._settings = settings
-        self._provider = provider or ModelScopeProvider(settings)
+        self._provider = provider or GenerationProvider(settings)
         self._callback_client = callback_client or CallbackClient(settings)
         self._store = store or WorkflowStore()
         self._graph = build_generation_graph(
@@ -58,13 +58,14 @@ class OrchestrationService:
     async def submit_generation(self, payload: WorkflowRequest) -> WorkflowAccepted:
         now = datetime.now(timezone.utc)
         workflow_task_id = f"wf_{uuid4().hex[:12]}"
+        provider_code = self._provider_code_for(payload)
         run_state = WorkflowRunState(
             workflowTaskId=workflow_task_id,
             taskId=payload.task_id,
             creationRequestId=payload.creation_request_id,
             projectId=payload.project_id,
             workflowType=payload.request_type,
-            providerCode="modelscope",
+            providerCode=provider_code,
             status="created",
             progress=0,
             acceptedAt=now,
@@ -74,7 +75,7 @@ class OrchestrationService:
         return WorkflowAccepted(
             workflowTaskId=workflow_task_id,
             workflowType=payload.request_type,
-            providerCode="modelscope",
+            providerCode=provider_code,
             status="created",
             acceptedAt=now.isoformat(),
         )
@@ -157,3 +158,8 @@ class OrchestrationService:
                 error_message=error_message,
                 finished_at=datetime.now(timezone.utc),
             )
+
+    def _provider_code_for(self, payload: WorkflowRequest) -> str:
+        if payload.request_type.strip() in {"text_to_video", "image_to_video"}:
+            return self._settings.video_provider
+        return "modelscope"

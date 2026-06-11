@@ -11,7 +11,10 @@ const requestTypeCapabilities = {
   },
 };
 
-export function canSubmitRequestType(requestType) {
+export function canSubmitRequestType(requestType, options = {}) {
+  if (requestType === "text_to_video" && options.videoEnabled) {
+    return true;
+  }
   return Boolean(requestTypeCapabilities[requestType]?.enabled);
 }
 

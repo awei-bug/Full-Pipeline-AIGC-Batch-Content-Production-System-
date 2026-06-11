@@ -84,6 +84,9 @@ $modelscopeToken = Get-EnvValue "MODELSCOPE_API_TOKEN"
 if (-not $modelscopeToken) {
   throw "MODELSCOPE_API_TOKEN was not found in Process/User/Machine environment."
 }
+$openaiToken = Get-EnvValue "OPENAI_API_KEY"
+$videoProvider = if ($openaiToken) { "openai" } else { "modelscope" }
+$videoEnabled = if ($openaiToken) { "true" } else { "false" }
 
 $apiPort = Get-FreePort 3100
 $orchestratorPort = Get-FreePort 8110
@@ -111,6 +114,8 @@ $orchestratorProc = Start-StackProcess `
   -workingDir (Join-Path $rootDir "apps/ai-orchestrator") `
   -commandLines @(
     ('$env:MODELSCOPE_API_TOKEN = "{0}"' -f $modelscopeToken.Replace('"', '""')),
+    ('$env:AI_VIDEO_PROVIDER = "{0}"' -f $videoProvider),
+    $(if ($openaiToken) { '$env:OPENAI_API_KEY = "{0}"' -f $openaiToken.Replace('"', '""') } else { '$env:OPENAI_API_KEY = ""' }),
     ('$env:API_SERVER_BASE_URL = "{0}"' -f $apiBaseUrl),
     ('$env:AI_ORCHESTRATOR_ASSETS_DIR = "{0}"' -f $assetsDir.Replace('"', '""')),
     '$env:PYTHONUTF8 = "1"',
@@ -124,6 +129,7 @@ $studioProc = Start-StackProcess `
   -workingDir (Join-Path $rootDir "apps/studio-web") `
   -commandLines @(
     ('$env:VITE_API_BASE_URL = "{0}"' -f $apiBaseUrl),
+    ('$env:VITE_ENABLE_VIDEO_GENERATION = "{0}"' -f $videoEnabled),
     ('npm run dev -- --host 127.0.0.1 --port {0} --strictPort' -f $studioPort)
   ) `
   -stdoutLog (Join-Path $stateDir "studio-web.out.log") `

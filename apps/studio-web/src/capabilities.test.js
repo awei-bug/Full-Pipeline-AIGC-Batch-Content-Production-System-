@@ -12,6 +12,10 @@ test("image generation is the only production submission path", () => {
   assert.equal(canSubmitRequestType("text_to_video"), false);
 });
 
+test("video generation can be enabled by deployment config", () => {
+  assert.equal(canSubmitRequestType("text_to_video", { videoEnabled: true }), true);
+});
+
 test("video generation is shown as experimental", () => {
   assert.equal(getRequestTypeLabel("text_to_video"), "文生视频（实验中）");
   assert.equal(

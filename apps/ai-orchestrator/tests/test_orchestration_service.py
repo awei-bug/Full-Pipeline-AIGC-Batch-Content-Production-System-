@@ -126,6 +126,32 @@ class OrchestrationServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(callback_client.events), 1)
         self.assertEqual(callback_client.events[0].status, "failed")
 
+    async def test_submit_generation_uses_openai_provider_code_for_openai_video(self):
+        settings = Settings(
+            callback_base_url="http://127.0.0.1:3100",
+            video_provider="openai",
+        )
+        service = OrchestrationService(
+            settings,
+            provider=FakeProvider(),
+            callback_client=FakeCallbackClient(),
+            store=WorkflowStore(),
+        )
+        payload = WorkflowRequest(
+            projectId="project_001",
+            creationRequestId="cr_001",
+            taskId="task_003",
+            prompt="Generate a short video.",
+            requestType="text_to_video",
+        )
+
+        accepted = await service.submit_generation(payload)
+        run_state = service.get_run(accepted.workflow_task_id)
+
+        self.assertEqual(accepted.provider_code, "openai")
+        self.assertIsNotNone(run_state)
+        self.assertEqual(run_state.provider_code, "openai")
+
 
 if __name__ == "__main__":
     unittest.main()

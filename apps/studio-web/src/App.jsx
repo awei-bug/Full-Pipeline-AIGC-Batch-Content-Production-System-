@@ -9,6 +9,7 @@ import { getStageAspectRatio, getStyleSummary } from "./presentation.js";
 import { deriveResultView } from "./result-view.js";
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:3100";
+const videoGenerationEnabled = import.meta.env.VITE_ENABLE_VIDEO_GENERATION === "true";
 
 const styleLabels = {
   cinematic: "电影感",
@@ -86,7 +87,10 @@ export function App() {
     [formState.requestType],
   );
   const canSubmitCurrentRequestType = useMemo(
-    () => canSubmitRequestType(formState.requestType),
+    () =>
+      canSubmitRequestType(formState.requestType, {
+        videoEnabled: videoGenerationEnabled,
+      }),
     [formState.requestType],
   );
   const resultView = useMemo(
