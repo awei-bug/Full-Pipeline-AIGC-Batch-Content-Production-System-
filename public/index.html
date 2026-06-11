@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>智能内容创作平台</title>
+    <link rel="stylesheet" href="/app.css" />
+  </head>
+  <body>
+    <div class="layout">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">智</div>
+          <div>
+            <div class="brand-title">智能内容创作平台</div>
+            <div class="brand-subtitle">图片与视频生成</div>
+          </div>
+        </div>
+
+        <section class="panel">
+          <div class="panel-title">账户</div>
+          <div id="user-card" class="info-list"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-title">当前任务</div>
+          <div id="task-feed" class="feed empty">还没有任务</div>
+        </section>
+      </aside>
+
+      <main class="main">
+        <section class="composer">
+          <div class="section-header">
+            <div>
+              <h1>生成图片或视频</h1>
+              <p>输入提示词，系统会异步生成资源并自动保存到作品列表。</p>
+            </div>
+          </div>
+
+          <form id="creation-form" class="compose-form">
+            <div class="mode-switch">
+              <label><input type="radio" name="kind" value="image" checked /> 图片</label>
+              <label><input type="radio" name="kind" value="video" /> 视频</label>
+            </div>
+
+            <label class="field">
+              <span>提示词</span>
+              <textarea id="prompt" name="prompt" rows="5" placeholder="例如：雨夜城市街头，未来感，电影级灯光"></textarea>
+            </label>
+
+            <div class="field-row">
+              <label class="field">
+                <span>风格</span>
+                <select id="styleCode" name="styleCode">
+                  <option value="cinematic">电影感</option>
+                  <option value="realistic">写实</option>
+                  <option value="cyberpunk">赛博朋克</option>
+                  <option value="minimal">极简</option>
+                </select>
+              </label>
+
+              <label class="field">
+                <span>比例</span>
+                <select id="aspectRatio" name="aspectRatio">
+                  <option value="16:9">横版 16:9</option>
+                  <option value="1:1">方图 1:1</option>
+                  <option value="9:16">竖版 9:16</option>
+                  <option value="4:3">标准 4:3</option>
+                </select>
+              </label>
+
+              <label class="field" id="duration-field">
+                <span>视频时长</span>
+                <select id="durationSec" name="durationSec">
+                  <option value="4">4 秒</option>
+                  <option value="6">6 秒</option>
+                  <option value="8">8 秒</option>
+                </select>
+              </label>
+            </div>
+
+            <div class="actions">
+              <button type="submit" class="primary">开始生成</button>
+              <div id="submit-hint" class="submit-hint">图片消耗 10 点额度，视频消耗 40 点额度。</div>
+            </div>
+          </form>
+        </section>
+
+        <section class="results">
+          <div class="section-header">
+            <h2>作品列表</h2>
+            <button id="refresh-works" class="secondary" type="button">刷新</button>
+          </div>
+          <div id="works-grid" class="works-grid empty">暂无作品</div>
+        </section>
+      </main>
+    </div>
+
+    <template id="work-card-template">
+      <article class="work-card">
+        <div class="work-media"></div>
+        <div class="work-body">
+          <div class="work-title-row">
+            <h3 class="work-title"></h3>
+            <span class="work-kind"></span>
+          </div>
+          <p class="work-prompt"></p>
+          <div class="work-meta"></div>
+          <div class="work-actions">
+            <a class="open-asset" target="_blank" rel="noreferrer">查看资源</a>
+            <button class="regenerate" type="button">再次生成</button>
+          </div>
+        </div>
+      </article>
+    </template>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

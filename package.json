@@ -1,0 +1,39 @@
+{
+  "name": "ai-content-platform",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/studio-web",
+    "apps/api-server"
+  ],
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js",
+    "legacy:dev": "node --watch src/server.js",
+    "legacy:start": "node src/server.js",
+    "dev:studio": "npm --workspace apps/studio-web run dev",
+    "build:studio": "npm --workspace apps/studio-web run build",
+    "dev:api": "npm --workspace apps/api-server run dev",
+    "start:api": "npm --workspace apps/api-server run start",
+    "dev:orchestrator": "py -m uvicorn app.main:app --host 127.0.0.1 --port 8110 --reload --app-dir apps/ai-orchestrator",
+    "stack:start": "powershell -ExecutionPolicy Bypass -File scripts/start-local-stack.ps1",
+    "stack:stop": "powershell -ExecutionPolicy Bypass -File scripts/stop-local-stack.ps1",
+    "stack:smoke": "powershell -ExecutionPolicy Bypass -File scripts/smoke-local-stack.ps1",
+    "stack:smoke:image": "powershell -ExecutionPolicy Bypass -File scripts/smoke-local-stack.ps1 -RequestType text_to_image",
+    "stack:smoke:video": "powershell -ExecutionPolicy Bypass -File scripts/smoke-local-stack.ps1 -RequestType text_to_video",
+    "modelscope:probe-video": "node scripts/modelscope-video-probe.js",
+    "test:probe-video": "node --test scripts/modelscope-video-probe.test.js",
+    "db:init": "node scripts/init-postgres.js",
+    "db:init:core": "node scripts/init-core-schema.js",
+    "data:reset": "node scripts/reset-generated-data.js"
+  },
+  "dependencies": {
+    "@fastify/formbody": "^8.0.2",
+    "@fastify/static": "^8.2.0",
+    "fastify": "^5.6.1",
+    "gifenc": "^1.0.3",
+    "pg": "^8.16.3",
+    "sharp": "^0.34.2"
+  }
+}
