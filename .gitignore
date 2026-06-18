@@ -12,6 +12,7 @@ data/platform-db.json
 storage/assets/
 storage/generated/
 storage/temp/
+demo/tmp/
 *.db
 *.log
 npm-debug.log*

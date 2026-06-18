@@ -61,5 +61,36 @@ export function createAiOrchestratorClient(
         clearTimeout(timeout);
       }
     },
+    async submitBatchItem(payload) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+      try {
+        const response = await fetchImpl(`${baseUrl}/internal/batch-jobs/items`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(payload),
+          signal: controller.signal,
+        });
+
+        const responseText = await response.text();
+        const responsePayload = responseText ? JSON.parse(responseText) : null;
+
+        if (!response.ok) {
+          throw new Error(buildErrorMessage(response.status, responsePayload));
+        }
+
+        return responsePayload?.data || {};
+      } catch (error) {
+        if (error?.name === "AbortError") {
+          throw new Error("编排服务批任务请求超时");
+        }
+        throw error;
+      } finally {
+        clearTimeout(timeout);
+      }
+    },
   };
 }

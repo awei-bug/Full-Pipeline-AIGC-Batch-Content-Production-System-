@@ -6,10 +6,28 @@ import { projectsRouter } from "./routes/projects.js";
 import { creationRequestsRouter } from "./routes/creation-requests.js";
 import { tasksRouter } from "./routes/tasks.js";
 import { worksRouter } from "./routes/works.js";
+import { importBatchesRouter } from "./routes/import-batches.js";
+import { productsRouter } from "./routes/products.js";
+import { contentJobsRouter } from "./routes/content-jobs.js";
+import { contentOutputsRouter } from "./routes/content-outputs.js";
+import { contentExportsRouter } from "./routes/content-exports.js";
+import { batchItemEventsRouter } from "./routes/batch-item-events.js";
 import { orchestratorEventsRouter } from "./routes/orchestrator-events.js";
 import { createPool, hasDatabaseConfig } from "./lib/database.js";
 import { createAiOrchestratorClient, hasAiOrchestratorConfig } from "./lib/ai-orchestrator-client.js";
 import { MemoryProjectsRepository, PostgresProjectsRepository } from "./repositories/projects-repository.js";
+import {
+  MemoryImportBatchesRepository,
+  PostgresImportBatchesRepository,
+} from "./repositories/import-batches-repository.js";
+import {
+  MemoryProductsRepository,
+  PostgresProductsRepository,
+} from "./repositories/products-repository.js";
+import {
+  MemoryContentJobsRepository,
+  PostgresContentJobsRepository,
+} from "./repositories/content-jobs-repository.js";
 import { MemoryWorkflowRepository, PostgresWorkflowRepository } from "./repositories/workflow-repository.js";
 
 export async function buildApp({ env = process.env } = {}) {
@@ -24,11 +42,23 @@ export async function buildApp({ env = process.env } = {}) {
   const aiOrchestratorConfigured = hasAiOrchestratorConfig(env);
   const pool = createPool(env);
   const projectsRepository = pool ? new PostgresProjectsRepository(pool) : new MemoryProjectsRepository();
+  const importBatchesRepository = pool
+    ? new PostgresImportBatchesRepository(pool)
+    : new MemoryImportBatchesRepository();
+  const productsRepository = pool
+    ? new PostgresProductsRepository(pool)
+    : new MemoryProductsRepository(importBatchesRepository);
+  const contentJobsRepository = pool
+    ? new PostgresContentJobsRepository(pool, productsRepository)
+    : new MemoryContentJobsRepository(productsRepository);
   const workflowRepository = pool ? new PostgresWorkflowRepository(pool) : new MemoryWorkflowRepository();
   const aiOrchestratorClient = createAiOrchestratorClient(env);
 
   app.locals.pool = pool;
   app.locals.projectsRepository = projectsRepository;
+  app.locals.importBatchesRepository = importBatchesRepository;
+  app.locals.productsRepository = productsRepository;
+  app.locals.contentJobsRepository = contentJobsRepository;
   app.locals.workflowRepository = workflowRepository;
   app.locals.aiOrchestratorClient = aiOrchestratorClient;
 
@@ -54,10 +84,16 @@ export async function buildApp({ env = process.env } = {}) {
   });
 
   app.use("/api/projects", projectsRouter);
+  app.use("/api/import-batches", importBatchesRouter);
+  app.use("/api/products", productsRouter);
+  app.use("/api/content-jobs", contentJobsRouter);
+  app.use("/api/content-outputs", contentOutputsRouter);
+  app.use("/api/content-exports", contentExportsRouter);
   app.use("/api/creation-requests", creationRequestsRouter);
   app.use("/api/tasks", tasksRouter);
   app.use("/api/works", worksRouter);
   app.use("/internal/orchestrator", orchestratorEventsRouter);
+  app.use("/internal/batch-items/events", batchItemEventsRouter);
 
   app.use((error, _request, response, _next) => {
     response.status(500).json({

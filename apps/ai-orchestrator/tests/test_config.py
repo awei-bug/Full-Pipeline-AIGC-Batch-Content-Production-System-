@@ -20,6 +20,12 @@ class SettingsTests(unittest.TestCase):
 
         self.assertEqual(settings.modelscope_video_model, "Wan-AI/Wan2.1-T2V-1.3B")
 
+    def test_default_text_model_uses_full_modelscope_model_id(self):
+        with patch.dict(os.environ, {}, clear=True):
+            settings = Settings.from_env()
+
+        self.assertEqual(settings.modelscope_text_model, "Qwen/Qwen2.5-7B-Instruct")
+
     def test_default_data_inspection_uses_json_config(self):
         with patch.dict(os.environ, {}, clear=True):
             settings = Settings.from_env()
@@ -56,6 +62,42 @@ class SettingsTests(unittest.TestCase):
             settings = Settings.from_env()
 
         self.assertEqual(settings.video_provider, "modelscope")
+
+    def test_agnes_key_selects_agnes_providers_by_default(self):
+        with patch.dict(
+            os.environ,
+            {
+                "AGNES_API_KEY": "agnes-token",
+            },
+            clear=True,
+        ):
+            settings = Settings.from_env()
+
+        self.assertEqual(settings.agnes_api_key, "agnes-token")
+        self.assertEqual(settings.agnes_base_url, "https://apihub.agnes-ai.com/v1")
+        self.assertEqual(settings.text_provider, "agnes")
+        self.assertEqual(settings.image_provider, "agnes")
+        self.assertEqual(settings.video_provider, "agnes")
+        self.assertEqual(settings.agnes_text_model, "agnes-2.0-flash")
+        self.assertEqual(settings.agnes_image_model, "agnes-image-2.1-flash")
+        self.assertEqual(settings.agnes_video_model, "agnes-video-v2.0")
+
+    def test_explicit_provider_env_can_override_agnes_defaults(self):
+        with patch.dict(
+            os.environ,
+            {
+                "AGNES_API_KEY": "agnes-token",
+                "AI_TEXT_PROVIDER": "modelscope",
+                "AI_IMAGE_PROVIDER": "modelscope",
+                "AI_VIDEO_PROVIDER": "openai",
+            },
+            clear=True,
+        ):
+            settings = Settings.from_env()
+
+        self.assertEqual(settings.text_provider, "modelscope")
+        self.assertEqual(settings.image_provider, "modelscope")
+        self.assertEqual(settings.video_provider, "openai")
 
 
 if __name__ == "__main__":

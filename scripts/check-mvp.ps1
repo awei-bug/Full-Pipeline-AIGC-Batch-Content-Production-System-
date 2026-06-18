@@ -31,11 +31,17 @@ Invoke-Step "node service and ui tests" {
   Push-Location $rootDir
   try {
     node --test `
+      apps/api-server/src/services/import-batch-service.test.js `
+      apps/api-server/src/services/products-service.test.js `
+      apps/api-server/src/services/content-job-service.test.js `
+      apps/api-server/src/services/batch-item-event-service.test.js `
+      apps/api-server/src/services/content-export-service.test.js `
       apps/api-server/src/services/creation-request-service.test.js `
       apps/api-server/src/services/task-event-service.test.js `
+      apps/studio-web/src/batch-api.test.js `
+      apps/studio-web/src/batch-view-model.test.js `
       apps/studio-web/src/capabilities.test.js `
-      apps/studio-web/src/presentation.test.js `
-      apps/studio-web/src/result-view.test.js `
+      scripts/local-stack-common.test.js `
       scripts/modelscope-video-probe.test.js
   } finally {
     Pop-Location
@@ -56,11 +62,8 @@ Invoke-Step "git ignore guard" {
   try {
     if (Test-Path ".git") {
       $ignoredPaths = @(
-        ".local-stack/ai-orchestrator-run.ps1",
         "data/platform-db.json",
-        "storage/generated/wf_b80bb3bc8b6a.png",
-        "rag.db",
-        "server.out.log"
+        "storage/generated/wf_b80bb3bc8b6a.png"
       )
 
       foreach ($path in $ignoredPaths) {

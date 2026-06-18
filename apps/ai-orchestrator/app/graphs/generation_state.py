@@ -26,11 +26,12 @@ class GenerationGraphState(TypedDict):
 def build_initial_generation_state(
     workflow_task_id: str,
     payload: WorkflowRequest,
+    provider_code: str = "modelscope",
 ) -> GenerationGraphState:
     return GenerationGraphState(
         workflow_task_id=workflow_task_id,
         workflow_type=payload.request_type,
-        provider_code="modelscope",
+        provider_code=provider_code,
         request=payload,
         current_stage="validate_request",
         progress=0,

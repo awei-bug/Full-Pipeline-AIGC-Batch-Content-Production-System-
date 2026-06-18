@@ -43,6 +43,16 @@ async def generate(payload: WorkflowRequest) -> dict:
     }
 
 
+@app.post("/internal/batch-jobs/items")
+async def generate_batch_item(payload: dict) -> dict:
+    accepted = await service.submit_batch_item(payload)
+    return {
+        "code": "SUCCESS",
+        "message": "批量任务项已受理",
+        "data": accepted,
+    }
+
+
 @app.get("/internal/workflows/{workflow_task_id}")
 def get_workflow(workflow_task_id: str) -> dict:
     run_state = service.get_run(workflow_task_id)

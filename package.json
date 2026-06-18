@@ -8,10 +8,8 @@
     "apps/api-server"
   ],
   "scripts": {
-    "dev": "node --watch src/server.js",
-    "start": "node src/server.js",
-    "legacy:dev": "node --watch src/server.js",
-    "legacy:start": "node src/server.js",
+    "dev": "npm --workspace apps/api-server run dev",
+    "start": "npm --workspace apps/api-server run start",
     "dev:studio": "npm --workspace apps/studio-web run dev",
     "build:studio": "npm --workspace apps/studio-web run build",
     "dev:api": "npm --workspace apps/api-server run dev",

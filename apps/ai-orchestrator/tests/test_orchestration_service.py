@@ -41,6 +41,13 @@ class FakeProvider:
         )
 
 
+class FailingProviderWithCode:
+    async def generate(self, workflow_task_id, payload, on_progress=None):
+        error = RuntimeError("Agnes 视频下载服务暂时不可用，上游返回 502。")
+        error.code = "AGNES_DOWNLOAD_FAILED"
+        raise error
+
+
 class FakeCallbackClient:
     def __init__(self):
         self.events = []
@@ -151,6 +158,62 @@ class OrchestrationServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(accepted.provider_code, "openai")
         self.assertIsNotNone(run_state)
         self.assertEqual(run_state.provider_code, "openai")
+
+    async def test_submit_generation_uses_agnes_provider_code_for_image_when_configured(self):
+        settings = Settings(
+            callback_base_url="http://127.0.0.1:3100",
+            image_provider="agnes",
+        )
+        service = OrchestrationService(
+            settings,
+            provider=FakeProvider(),
+            callback_client=FakeCallbackClient(),
+            store=WorkflowStore(),
+        )
+        payload = WorkflowRequest(
+            projectId="project_001",
+            creationRequestId="cr_001",
+            taskId="task_004",
+            prompt="Generate an image.",
+            requestType="text_to_image",
+        )
+
+        accepted = await service.submit_generation(payload)
+        run_state = service.get_run(accepted.workflow_task_id)
+
+        self.assertEqual(accepted.provider_code, "agnes")
+        self.assertIsNotNone(run_state)
+        self.assertEqual(run_state.provider_code, "agnes")
+
+    async def test_submit_generation_preserves_provider_error_code_and_message(self):
+        settings = Settings(
+            callback_base_url="http://127.0.0.1:3100",
+            video_provider="agnes",
+        )
+        callback_client = FakeCallbackClient()
+        service = OrchestrationService(
+            settings,
+            provider=FailingProviderWithCode(),
+            callback_client=callback_client,
+            store=WorkflowStore(),
+        )
+        payload = WorkflowRequest(
+            projectId="project_001",
+            creationRequestId="cr_001",
+            taskId="task_005",
+            prompt="Generate a short video.",
+            requestType="text_to_video",
+        )
+
+        accepted = await service.submit_generation(payload)
+        run_state = await self._wait_for_terminal_run_state(service, accepted.workflow_task_id)
+
+        self.assertIsNotNone(run_state)
+        self.assertEqual(run_state.status, "failed")
+        self.assertEqual(run_state.error_code, "AGNES_DOWNLOAD_FAILED")
+        self.assertEqual(run_state.error_message, "Agnes 视频下载服务暂时不可用，上游返回 502。")
+        self.assertEqual(callback_client.events[0].provider_code, "agnes")
+        self.assertEqual(callback_client.events[0].error_code, "AGNES_DOWNLOAD_FAILED")
 
 
 if __name__ == "__main__":

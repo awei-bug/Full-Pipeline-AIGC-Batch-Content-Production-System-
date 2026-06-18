@@ -6,10 +6,11 @@
   "scripts": {
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
-    "test": "node --test src/services/creation-request-service.test.js src/services/task-event-service.test.js"
+    "test": "node --test src/services/creation-request-service.test.js src/services/import-batch-service.test.js src/services/products-service.test.js src/services/content-job-service.test.js src/services/task-event-service.test.js src/services/batch-item-event-service.test.js src/services/content-export-service.test.js"
   },
   "dependencies": {
     "cors": "^2.8.5",
+    "exceljs": "^4.4.0",
     "express": "^4.21.1",
     "pg": "^8.16.3"
   }

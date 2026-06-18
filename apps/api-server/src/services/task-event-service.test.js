@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { applyTaskEvent } from "./task-event-service.js";
 import { MemoryWorkflowRepository } from "../repositories/workflow-repository.js";
+import { applyTaskEvent } from "./task-event-service.js";
 
 test("编排成功回调后生成作品和资产记录", async () => {
   const repository = new MemoryWorkflowRepository();
@@ -143,4 +143,40 @@ test("failed task event stores external provider task id", async () => {
 
   const task = await repository.getTaskById(created.taskId);
   assert.equal(task.metadata.provider.externalTaskId, "external-video-001");
+});
+
+test("failed task event sanitizes html provider error messages", async () => {
+  const repository = new MemoryWorkflowRepository();
+  const created = await repository.createCreationRequest({
+    projectId: "project_004",
+    prompt: "Generate a short city video",
+    requestType: "text_to_video",
+    styleCode: "realistic",
+    aspectRatio: "16:9",
+  });
+
+  await repository.markTaskQueued({
+    taskId: created.taskId,
+    providerCode: "agnes",
+    workflowRun: {
+      workflowTaskId: "wf_004",
+      workflowType: "text_to_video",
+      providerCode: "agnes",
+      status: "created",
+      acceptedAt: "2026-06-10T12:00:00.000Z",
+    },
+  });
+
+  const result = await applyTaskEvent({
+    workflowRepository: repository,
+    event: {
+      taskId: created.taskId,
+      status: "failed",
+      providerCode: "agnes",
+      errorCode: "AGNES_VIDEO_FAILED",
+      errorMessage: "<!DOCTYPE html><html><body>Bad gateway</body></html>",
+    },
+  });
+
+  assert.equal(result.task.errorMessage, "生成服务暂时不可用，请稍后重试。");
 });

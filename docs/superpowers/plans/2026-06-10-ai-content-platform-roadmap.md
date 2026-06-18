@@ -1,5 +1,7 @@
 # AI内容创作平台演进路线图
 
+> 归档说明：这份文档记录的是从旧单体 MVP 向三层架构迁移时的路线图。文中提到的 `src/server.js`、`src/task-orchestrator.js`、`public/app.js` 等路径已退出运行链路，仅保留为历史迁移背景。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 将当前单体 Fastify MVP 演进为基于 React + Express + FastAPI + LangChain/LangGraph 的面向漫剧与内容生产场景的 AI 创作平台。
@@ -14,24 +16,20 @@
 
 ### 当前仓库已经具备的能力
 
-- 单体 Web 服务：`src/server.js`
-- API 路由：`src/routes.js`
-- 异步任务推进：`src/task-orchestrator.js`
-- 生成 provider 抽象：`src/providers/`
-- PostgreSQL / JSON 双存储兜底：`src/store.js`
-- 简单前端控制台：`public/index.html`、`public/app.js`
+- React 工作台：`apps/studio-web`
+- Node API 服务：`apps/api-server`
+- Python AI 编排服务：`apps/ai-orchestrator`
+- PostgreSQL / 内存双存储兜底：`src/store.js` 与 `apps/api-server/src/repositories/*`
+- 批量商品导入、任务创建、结果导出闭环
 
 ### 当前仓库缺失的核心能力
 
-- React 工作台
-- Express API/BFF 层
-- FastAPI AI 编排服务
-- LangChain / LangGraph 工作流
-- 漫剧业务对象：项目、角色、场景、镜头、分镜、章节
-- 项目级配额与账单
-- 团队协作、租户隔离、素材库
-- Redis / 队列 / WebSocket 或 SSE
+- 项目级权限、团队协作和租户隔离
+- 提示词自动评测优化闭环
+- Text2SQL 和结构化商品数据库联动
 - 审核工作台、人工 review 节点
+- Redis / 队列 / WebSocket 或 SSE
+- 云端对象存储和生产部署基础设施
 
 ### 目标架构
 

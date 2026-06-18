@@ -5,6 +5,7 @@ $stateDir = Join-Path $rootDir ".local-stack"
 $stateFile = Join-Path $stateDir "state.json"
 
 New-Item -ItemType Directory -Force -Path $stateDir | Out-Null
+. (Join-Path $PSScriptRoot "local-stack-common.ps1")
 
 function Get-EnvValue([string]$name) {
   foreach ($scope in @("Process", "User", "Machine")) {
@@ -24,22 +25,84 @@ function Get-FreePort([int]$preferred) {
   return $port
 }
 
+function Set-SecretEnvironment {
+  param(
+    [hashtable]$Environment,
+    [string[]]$Names
+  )
+
+  foreach ($name in $Names) {
+    $value = Get-EnvValue $name
+    if (-not [string]::IsNullOrWhiteSpace($value)) {
+      $Environment[$name] = $value
+    }
+  }
+}
+
+function New-RunScript(
+  [string]$name,
+  [string]$workingDir,
+  [string]$filePath,
+  [string[]]$arguments,
+  [hashtable]$environment,
+  [string[]]$secretEnvNames
+) {
+  $runScriptPath = Join-Path $stateDir ("{0}-run.ps1" -f $name)
+  $scriptLines = @(
+    '$ErrorActionPreference = "Stop"',
+    'function Get-EnvValue([string]$name) {',
+    '  foreach ($scope in @("Process", "User", "Machine")) {',
+    '    $value = [Environment]::GetEnvironmentVariable($name, $scope)',
+    '    if (-not [string]::IsNullOrWhiteSpace($value)) {',
+    '      return $value',
+    '    }',
+    '  }',
+    '  return $null',
+    '}',
+    ("Set-Location '{0}'" -f $workingDir.Replace("'", "''"))
+  )
+
+  foreach ($key in $environment.Keys) {
+    $value = [string]$environment[$key]
+    $scriptLines += ("`$env:{0} = '{1}'" -f $key, $value.Replace("'", "''"))
+  }
+
+  foreach ($secretName in $secretEnvNames) {
+    $escapedSecretName = $secretName.Replace("'", "''")
+    $scriptLines += ("`$resolvedValue = Get-EnvValue '{0}'" -f $escapedSecretName)
+    $scriptLines += "if (-not [string]::IsNullOrWhiteSpace(`$resolvedValue)) {"
+    $scriptLines += ("  `$env:{0} = `$resolvedValue" -f $secretName)
+    $scriptLines += "}"
+  }
+
+  $joinedArguments = @($arguments | ForEach-Object { "'{0}'" -f $_.Replace("'", "''") }) -join ", "
+  $scriptLines += ("& '{0}' @({1})" -f $filePath.Replace("'", "''"), $joinedArguments)
+
+  Set-Content -Path $runScriptPath -Encoding UTF8 -Value ($scriptLines -join "`r`n")
+  return $runScriptPath
+}
+
 function Start-StackProcess(
   [string]$name,
   [string]$workingDir,
-  [string[]]$commandLines,
+  [string]$filePath,
+  [string[]]$arguments,
+  [hashtable]$environment,
+  [string[]]$secretEnvNames,
   [string]$stdoutLog,
   [string]$stderrLog
 ) {
-  $scriptPath = Join-Path $stateDir "$name-run.ps1"
-  $content = @(
-    '$ErrorActionPreference = "Stop"'
-    ('Set-Location "{0}"' -f $workingDir.Replace('"', '""'))
-  ) + $commandLines
-  Set-Content -Path $scriptPath -Value $content -Encoding UTF8
+  $runScriptPath = New-RunScript `
+    -name $name `
+    -workingDir $workingDir `
+    -filePath $filePath `
+    -arguments $arguments `
+    -environment $environment `
+    -secretEnvNames $secretEnvNames
 
-  return Start-Process powershell `
-    -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $scriptPath) `
+  return Start-Process powershell.exe `
+    -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $runScriptPath) `
+    -WorkingDirectory $workingDir `
     -RedirectStandardOutput $stdoutLog `
     -RedirectStandardError $stderrLog `
     -PassThru `
@@ -62,31 +125,38 @@ function Wait-HttpOk([string]$url, [int]$timeoutSec = 30) {
   return $false
 }
 
+function Remove-LegacyRunScripts() {
+  Get-ChildItem -Path $stateDir -Filter "*-run.ps1" -ErrorAction SilentlyContinue |
+    Remove-Item -Force -ErrorAction SilentlyContinue
+}
+
 if (Test-Path $stateFile) {
-  $state = Get-Content $stateFile | ConvertFrom-Json
-  $running = @()
-  foreach ($processInfo in $state.processes) {
-    try {
-      $process = Get-Process -Id $processInfo.pid -ErrorAction Stop
-      if ($process) {
-        $running += $processInfo.name
-      }
-    } catch {
+  $state = Get-LocalStackState -StateFile $stateFile
+  if ($null -ne $state) {
+    $runtime = Get-LocalStackRuntimeState -State $state
+    if ($runtime.runningProcesses.Count -gt 0 -or $runtime.occupiedPorts.Count -gt 0) {
+      $runningNames = @($runtime.runningProcesses | ForEach-Object { $_.name })
+      $runningPorts = @($runtime.occupiedPorts | ForEach-Object { "$_" })
+      $details = @($runningNames + $runningPorts) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+      throw "Local stack is already running: $($details -join ', '). Run npm run stack:stop first."
     }
-  }
 
-  if ($running.Count -gt 0) {
-    throw "Local stack is already running: $($running -join ', '). Run npm run stack:stop first."
+    Remove-Item $stateFile -Force -ErrorAction SilentlyContinue
   }
 }
 
+$agnesToken = Get-EnvValue "AGNES_API_KEY"
 $modelscopeToken = Get-EnvValue "MODELSCOPE_API_TOKEN"
-if (-not $modelscopeToken) {
-  throw "MODELSCOPE_API_TOKEN was not found in Process/User/Machine environment."
-}
 $openaiToken = Get-EnvValue "OPENAI_API_KEY"
-$videoProvider = if ($openaiToken) { "openai" } else { "modelscope" }
-$videoEnabled = if ($openaiToken) { "true" } else { "false" }
+
+$textProvider = if ($agnesToken) { "agnes" } else { "modelscope" }
+$imageProvider = if ($agnesToken) { "agnes" } else { "modelscope" }
+$videoProvider = if ($agnesToken) { "agnes" } elseif ($openaiToken) { "openai" } else { "modelscope" }
+$videoEnabled = if ($agnesToken -or $openaiToken) { "true" } else { "false" }
+
+if (-not $agnesToken -and -not $modelscopeToken) {
+  throw "Neither AGNES_API_KEY nor MODELSCOPE_API_TOKEN was found in Process/User/Machine environment."
+}
 
 $apiPort = Get-FreePort 3100
 $orchestratorPort = Get-FreePort 8110
@@ -96,57 +166,89 @@ $apiBaseUrl = "http://127.0.0.1:$apiPort"
 $orchestratorBaseUrl = "http://127.0.0.1:$orchestratorPort"
 $assetsDir = Join-Path $rootDir "storage/generated"
 
+$apiEnv = @{
+  API_PORT = "$apiPort"
+  API_HOST = "127.0.0.1"
+  AI_ORCHESTRATOR_BASE_URL = $orchestratorBaseUrl
+  AI_ORCHESTRATOR_ASSETS_DIR = $assetsDir
+}
+$forwardedDbEnvNames = @("PGHOST", "PGPORT", "PGUSER", "PGDATABASE", "POSTGRES_HOST", "POSTGRES_PORT", "POSTGRES_USER", "POSTGRES_DB")
+foreach ($dbKey in $forwardedDbEnvNames) {
+  $dbValue = Get-EnvValue $dbKey
+  if (-not [string]::IsNullOrWhiteSpace($dbValue)) {
+    $apiEnv[$dbKey] = $dbValue
+  }
+}
+
+$orchestratorEnv = @{
+  API_SERVER_BASE_URL = $apiBaseUrl
+  AI_ORCHESTRATOR_ASSETS_DIR = $assetsDir
+  AI_TEXT_PROVIDER = $textProvider
+  AI_IMAGE_PROVIDER = $imageProvider
+  AI_VIDEO_PROVIDER = $videoProvider
+  PYTHONUTF8 = "1"
+}
+
+$secretEnvNames = @(
+  "AGNES_API_KEY",
+  "MODELSCOPE_API_TOKEN",
+  "OPENAI_API_KEY",
+  "DATABASE_URL",
+  "PGPASSWORD",
+  "POSTGRES_PASSWORD"
+)
+
+$studioEnv = @{
+  VITE_API_BASE_URL = $apiBaseUrl
+  VITE_ENABLE_VIDEO_GENERATION = $videoEnabled
+}
+
 $apiProc = Start-StackProcess `
   -name "api-server" `
   -workingDir (Join-Path $rootDir "apps/api-server") `
-  -commandLines @(
-    ('$env:API_PORT = "{0}"' -f $apiPort),
-    '$env:API_HOST = "127.0.0.1"',
-    ('$env:AI_ORCHESTRATOR_BASE_URL = "{0}"' -f $orchestratorBaseUrl),
-    ('$env:AI_ORCHESTRATOR_ASSETS_DIR = "{0}"' -f $assetsDir.Replace('"', '""')),
-    'npm run start'
-  ) `
+  -filePath "node" `
+  -arguments @("src/server.js") `
+  -environment $apiEnv `
+  -secretEnvNames $secretEnvNames `
   -stdoutLog (Join-Path $stateDir "api-server.out.log") `
   -stderrLog (Join-Path $stateDir "api-server.err.log")
 
 $orchestratorProc = Start-StackProcess `
   -name "ai-orchestrator" `
   -workingDir (Join-Path $rootDir "apps/ai-orchestrator") `
-  -commandLines @(
-    ('$env:MODELSCOPE_API_TOKEN = "{0}"' -f $modelscopeToken.Replace('"', '""')),
-    ('$env:AI_VIDEO_PROVIDER = "{0}"' -f $videoProvider),
-    $(if ($openaiToken) { '$env:OPENAI_API_KEY = "{0}"' -f $openaiToken.Replace('"', '""') } else { '$env:OPENAI_API_KEY = ""' }),
-    ('$env:API_SERVER_BASE_URL = "{0}"' -f $apiBaseUrl),
-    ('$env:AI_ORCHESTRATOR_ASSETS_DIR = "{0}"' -f $assetsDir.Replace('"', '""')),
-    '$env:PYTHONUTF8 = "1"',
-    ('py -m uvicorn app.main:app --host 127.0.0.1 --port {0}' -f $orchestratorPort)
-  ) `
+  -filePath "py" `
+  -arguments @("-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "$orchestratorPort") `
+  -environment $orchestratorEnv `
+  -secretEnvNames $secretEnvNames `
   -stdoutLog (Join-Path $stateDir "ai-orchestrator.out.log") `
   -stderrLog (Join-Path $stateDir "ai-orchestrator.err.log")
+
+$studioEnv = @{
+  VITE_API_BASE_URL = $apiBaseUrl
+  VITE_ENABLE_VIDEO_GENERATION = $videoEnabled
+}
 
 $studioProc = Start-StackProcess `
   -name "studio-web" `
   -workingDir (Join-Path $rootDir "apps/studio-web") `
-  -commandLines @(
-    ('$env:VITE_API_BASE_URL = "{0}"' -f $apiBaseUrl),
-    ('$env:VITE_ENABLE_VIDEO_GENERATION = "{0}"' -f $videoEnabled),
-    ('npm run dev -- --host 127.0.0.1 --port {0} --strictPort' -f $studioPort)
-  ) `
+  -filePath "npm.cmd" `
+  -arguments @("run", "dev", "--", "--host", "127.0.0.1", "--port", "$studioPort", "--strictPort") `
+  -environment $studioEnv `
+  -secretEnvNames $secretEnvNames `
   -stdoutLog (Join-Path $stateDir "studio-web.out.log") `
   -stderrLog (Join-Path $stateDir "studio-web.err.log")
 
 if (-not (Wait-HttpOk "$orchestratorBaseUrl/health" 30)) {
-  throw "ai-orchestrator failed to start. Check .local-stack\\ai-orchestrator.err.log"
+  throw "ai-orchestrator failed to start. Check .local-stack\ai-orchestrator.err.log"
 }
 
 if (-not (Wait-HttpOk "$apiBaseUrl/api/health" 30)) {
-  throw "api-server failed to start. Check .local-stack\\api-server.err.log"
+  throw "api-server failed to start. Check .local-stack\api-server.err.log"
 }
 
 if (-not (Wait-HttpOk "http://127.0.0.1:$studioPort" 30)) {
-  throw "studio-web failed to start. Check .local-stack\\studio-web.err.log"
+  throw "studio-web failed to start. Check .local-stack\studio-web.err.log"
 }
-
 $state = [ordered]@{
   startedAt = (Get-Date).ToString("o")
   urls = [ordered]@{

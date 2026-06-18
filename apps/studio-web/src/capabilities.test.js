@@ -7,19 +7,19 @@ import {
   getRequestTypeLabel,
 } from "./capabilities.js";
 
-test("image generation is the only production submission path", () => {
+test("图片和视频能力默认都可提交", () => {
   assert.equal(canSubmitRequestType("text_to_image"), true);
-  assert.equal(canSubmitRequestType("text_to_video"), false);
+  assert.equal(canSubmitRequestType("text_to_video"), true);
 });
 
-test("video generation can be enabled by deployment config", () => {
-  assert.equal(canSubmitRequestType("text_to_video", { videoEnabled: true }), true);
+test("部署配置可以显式关闭视频能力", () => {
+  assert.equal(canSubmitRequestType("text_to_video", { videoEnabled: false }), false);
 });
 
-test("video generation is shown as experimental", () => {
-  assert.equal(getRequestTypeLabel("text_to_video"), "文生视频（实验中）");
+test("视频能力文案反映真实接入状态", () => {
+  assert.equal(getRequestTypeLabel("text_to_video"), "文生视频");
   assert.equal(
     getRequestTypeHelpText("text_to_video"),
-    "视频生成正在接入真实可用的服务商，当前先开放图片生成闭环。",
+    "视频能力已接入 Agnes 提供的模型服务，但稳定性仍受上游服务波动影响。",
   );
 });

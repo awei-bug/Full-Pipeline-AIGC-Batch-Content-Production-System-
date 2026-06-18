@@ -30,11 +30,30 @@ export async function applyTaskEvent({
       providerCode: String(event.providerCode || "").trim() || null,
       errorCode: String(event.errorCode || "").trim() || null,
       externalTaskId: String(event.externalTaskId || "").trim() || null,
-      errorMessage: String(event.errorMessage || "任务失败").trim(),
+      errorMessage: normalizeTaskErrorMessage(event.errorMessage),
     });
   }
 
   const error = new Error("暂不支持该事件状态");
   error.code = "INVALID_STATUS";
   throw error;
+}
+
+export function normalizeTaskErrorMessage(rawMessage) {
+  const message = String(rawMessage || "任务失败").trim();
+  if (!message) {
+    return "任务失败";
+  }
+
+  const lowered = message.toLowerCase();
+  if (
+    lowered.includes("<html") ||
+    lowered.includes("<!doctype html") ||
+    lowered.includes("bad gateway") ||
+    lowered.includes("cloudflare")
+  ) {
+    return "生成服务暂时不可用，请稍后重试。";
+  }
+
+  return message;
 }

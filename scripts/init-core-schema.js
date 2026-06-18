@@ -34,6 +34,7 @@ const sqlFiles = [
   "002_project_domain.sql",
   "003_workflow_domain.sql",
   "004_credit_domain.sql",
+  "005_import_batch_domain.sql",
 ];
 
 try {

@@ -6,6 +6,8 @@ from typing import Any
 from uuid import uuid4
 
 from ..config import Settings
+from ..graphs.batch_generation_graph import build_batch_generation_graph
+from ..graphs.batch_generation_state import build_initial_batch_state
 from ..graphs.generation_graph import build_generation_graph
 from ..graphs.generation_state import build_initial_generation_state
 from ..models import (
@@ -54,6 +56,7 @@ class OrchestrationService:
             self._provider,
             self._callback_client,
         )
+        self._batch_graph = build_batch_generation_graph(self._provider)
 
     async def submit_generation(self, payload: WorkflowRequest) -> WorkflowAccepted:
         now = datetime.now(timezone.utc)
@@ -80,6 +83,29 @@ class OrchestrationService:
             acceptedAt=now.isoformat(),
         )
 
+    async def submit_batch_item(self, payload: dict[str, Any]) -> dict[str, Any]:
+        now = datetime.now(timezone.utc)
+        workflow_task_id = f"wf_{uuid4().hex[:12]}"
+        job_item_id = StringLike(payload.get("jobItemId")).value
+        run_state = WorkflowRunState(
+            workflowTaskId=workflow_task_id,
+            taskId=job_item_id or workflow_task_id,
+            creationRequestId=str(payload.get("jobId") or workflow_task_id),
+            projectId=str(payload.get("productId") or "batch-project"),
+            workflowType="batch_content_item",
+            providerCode="batch",
+            status="created",
+            progress=0,
+            acceptedAt=now,
+        )
+        self._store.create_run(run_state)
+        asyncio.create_task(self._run_batch_item(workflow_task_id, payload))
+        return {
+            "workflowTaskId": workflow_task_id,
+            "jobItemId": job_item_id,
+            "status": "created",
+        }
+
     def get_run(self, workflow_task_id: str) -> WorkflowRunState | None:
         return self._store.get_run(workflow_task_id)
 
@@ -98,14 +124,19 @@ class OrchestrationService:
 
         try:
             final_state = await self._graph.ainvoke(
-                build_initial_generation_state(workflow_task_id, payload)
+                build_initial_generation_state(
+                    workflow_task_id,
+                    payload,
+                    provider_code=self._provider_code_for(payload),
+                )
             )
         except Exception as error:  # noqa: BLE001
             await self._handle_failure(
                 workflow_task_id,
                 payload.task_id,
-                "ORCHESTRATOR_FAILED",
+                getattr(error, "code", "ORCHESTRATOR_FAILED"),
                 str(error),
+                self._provider_code_for(payload),
             )
             return
 
@@ -133,19 +164,89 @@ class OrchestrationService:
             },
         )
 
+    async def _run_batch_item(
+        self,
+        workflow_task_id: str,
+        payload: dict[str, Any],
+    ) -> None:
+        started_at = datetime.now(timezone.utc)
+        self._store.update_run(
+            workflow_task_id,
+            status="running",
+            progress=5,
+            started_at=started_at,
+        )
+
+        try:
+            final_state = await self._batch_graph.ainvoke(
+                build_initial_batch_state(
+                    workflow_task_id=workflow_task_id,
+                    job_item=payload,
+                )
+            )
+        except Exception as error:  # noqa: BLE001
+            callback = getattr(self._callback_client, "send_batch_item_event", None)
+            if callable(callback):
+                await callback(
+                    {
+                        "jobItemId": StringLike(payload.get("jobItemId")).value,
+                        "status": "failed",
+                        "errorCode": "BATCH_ITEM_FAILED",
+                        "errorMessage": str(error),
+                    }
+                )
+            self._store.update_run(
+                workflow_task_id,
+                status="failed",
+                error_code="BATCH_ITEM_FAILED",
+                error_message=str(error),
+                finished_at=datetime.now(timezone.utc),
+            )
+            return
+
+        callback = getattr(self._callback_client, "send_batch_item_event", None)
+        if callable(callback):
+            await callback(
+                {
+                    "jobItemId": StringLike(payload.get("jobItemId")).value,
+                    "status": "succeeded",
+                    "outputs": final_state.get("outputs", []),
+                    "usage": {
+                        "estimatedTokens": 0,
+                        "estimatedCost": 0,
+                    },
+                    "riskStatus": "degraded" if final_state.get("degraded") else "passed",
+                    "warnings": final_state.get("warnings", []),
+                }
+            )
+
+        self._store.update_run(
+            workflow_task_id,
+            status="success",
+            progress=100,
+            finished_at=datetime.now(timezone.utc),
+            result_summary={
+                "jobItemId": StringLike(payload.get("jobItemId")).value,
+                "status": final_state.get("status", "success"),
+                "outputCount": len(final_state.get("outputs", [])),
+                "degraded": bool(final_state.get("degraded")),
+            },
+        )
+
     async def _handle_failure(
         self,
         workflow_task_id: str,
         task_id: str,
         error_code: str,
         error_message: str,
+        provider_code: str,
     ) -> None:
         try:
             await self._callback_client.send_task_event(
                 TaskEventPayload(
                     taskId=task_id,
                     status="failed",
-                    providerCode="modelscope",
+                    providerCode=provider_code,
                     errorCode=error_code,
                     errorMessage=error_message,
                 )
@@ -162,4 +263,11 @@ class OrchestrationService:
     def _provider_code_for(self, payload: WorkflowRequest) -> str:
         if payload.request_type.strip() in {"text_to_video", "image_to_video"}:
             return self._settings.video_provider
-        return "modelscope"
+        if payload.request_type.strip() in {"text_to_image", "image_to_image"}:
+            return self._settings.image_provider
+        return self._settings.image_provider
+
+
+class StringLike:
+    def __init__(self, value: Any) -> None:
+        self.value = str(value or "").strip()

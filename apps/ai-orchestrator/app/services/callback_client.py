@@ -22,5 +22,20 @@ class CallbackClient:
 
         if response.status_code >= 400:
             raise RuntimeError(
-                f"回调业务接口失败，状态码 {response.status_code}"
+                f"回调任务接口失败，状态码 {response.status_code}"
+            )
+
+    async def send_batch_item_event(self, payload: dict) -> None:
+        if not self._settings.callback_base_url:
+            raise RuntimeError("未配置业务接口回调地址")
+
+        async with httpx.AsyncClient(timeout=self._settings.create_timeout_sec) as client:
+            response = await client.post(
+                f"{self._settings.callback_base_url}/internal/batch-items/events",
+                json=payload,
+            )
+
+        if response.status_code >= 400:
+            raise RuntimeError(
+                f"回调批量子任务接口失败，状态码 {response.status_code}"
             )
