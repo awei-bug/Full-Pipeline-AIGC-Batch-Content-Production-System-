@@ -19,24 +19,97 @@ class ModelScopeTextProvider:
         self._settings = settings
         self._transport = transport
 
+    def _product_fields(self, product: dict[str, Any]) -> dict[str, str]:
+        return {
+            "name": str(product.get("name") or product.get("title") or "Export Product").strip(),
+            "selling_point": str(
+                product.get("sellingPoint") or product.get("price") or "Core export advantage"
+            ).strip(),
+            "category": str(product.get("category") or "General product").strip(),
+            "audience": str(
+                product.get("audience") or product.get("targetMarket") or "Overseas buyers"
+            ).strip(),
+            "scenario": str(
+                product.get("scenario") or product.get("application") or "B2B wholesale"
+            ).strip(),
+            "price": str(product.get("price") or "FOB negotiable").strip(),
+        }
+
+    async def chat(self, messages: list[dict[str, str]]) -> dict[str, Any]:
+        normalized_messages = [
+            {
+                "role": str(message.get("role") or "user").strip(),
+                "content": str(message.get("content") or "").strip(),
+            }
+            for message in messages
+            if isinstance(message, dict) and str(message.get("content") or "").strip()
+        ]
+        if not normalized_messages:
+            raise ValueError("对话内容不能为空。")
+        if not self._settings.modelscope_api_token:
+            raise RuntimeError("MODELSCOPE_API_TOKEN 未配置。")
+
+        async with self._client(
+            timeout=self._settings.create_timeout_sec,
+            token=self._settings.modelscope_api_token,
+            base_url=self._settings.modelscope_base_url,
+        ) as client:
+            response = await client.post(
+                "/chat/completions",
+                json={
+                    "model": self._settings.modelscope_text_model,
+                    "messages": normalized_messages,
+                    "temperature": 0.7,
+                },
+            )
+
+        if response.status_code >= 400:
+            try:
+                payload = response.json()
+                message = payload.get("message") or payload.get("detail")
+                if not message and isinstance(payload.get("error"), dict):
+                    message = payload["error"].get("message")
+            except ValueError:
+                message = None
+            raise RuntimeError(
+                str(message or f"ModelScope 对话请求失败，状态码 {response.status_code}")
+            )
+
+        payload = response.json()
+        content = (
+            payload.get("choices", [{}])[0]
+            .get("message", {})
+            .get("content", "")
+        )
+        if isinstance(content, list):
+            content = "".join(
+                str(item.get("text") or "") if isinstance(item, dict) else str(item)
+                for item in content
+            )
+        content = str(content or "").strip()
+        if not content:
+            raise RuntimeError("ModelScope 对话没有返回内容。")
+
+        return {
+            "content": content,
+            "model": self._settings.modelscope_text_model,
+            "provider": "modelscope",
+        }
+
     async def generate_copy(self, product: dict[str, Any]) -> dict[str, Any]:
-        name = str(product.get("name") or product.get("title") or "商品").strip()
-        selling_point = str(
-            product.get("sellingPoint") or product.get("price") or "核心卖点"
-        ).strip()
-        category = str(product.get("category") or "通用商品").strip()
-        audience = str(product.get("audience") or "泛人群").strip()
-        scenario = str(product.get("scenario") or "日常使用").strip()
+        fields = self._product_fields(product)
         prompt = (
-            "你是电商营销文案助手。\n"
-            "请基于给定商品信息，输出适合商品投放的营销文案。\n"
-            "必须严格返回 JSON，不要输出解释。\n"
+            "You are an export sales content assistant for Chinese factories.\n"
+            "Based on the product data, write English listing content for Alibaba / website / catalog.\n"
+            "Return strict JSON only, no explanation.\n"
             'JSON schema: {"title":"string","sellingPoints":["string"],"body":"string"}\n'
-            f"商品名称: {name}\n"
-            f"核心卖点: {selling_point}\n"
-            f"商品分类: {category}\n"
-            f"目标人群: {audience}\n"
-            f"使用场景: {scenario}"
+            "Requirements: professional B2B tone, clear benefits, export-friendly wording.\n"
+            f"Product name: {fields['name']}\n"
+            f"Key selling point: {fields['selling_point']}\n"
+            f"Category: {fields['category']}\n"
+            f"Target market: {fields['audience']}\n"
+            f"Application scenario: {fields['scenario']}\n"
+            f"Price note: {fields['price']}"
         )
         result = await self._request_json(prompt)
         if self._has_keys(result, "title", "sellingPoints", "body"):
@@ -44,9 +117,17 @@ class ModelScopeTextProvider:
 
         return self._with_generation_meta(
             {
-                "title": f"{name}营销标题",
-                "sellingPoints": [selling_point],
-                "body": f"{name}聚焦{selling_point}，适合{audience}在{scenario}场景快速转化。",
+                "title": f"{fields['name']} for {fields['audience']}",
+                "sellingPoints": [
+                    fields["selling_point"],
+                    f"Suitable for {fields['scenario']}",
+                    f"Category: {fields['category']}",
+                ],
+                "body": (
+                    f"{fields['name']} is designed for overseas buyers in {fields['audience']}. "
+                    f"Key advantage: {fields['selling_point']}. "
+                    f"Ideal for {fields['scenario']}. Price note: {fields['price']}."
+                ),
             },
             fallback_used=True,
             reason=result.get("_meta", {}).get("reason", "invalid_json_response"),
@@ -57,20 +138,21 @@ class ModelScopeTextProvider:
         product: dict[str, Any],
         copy: dict[str, Any],
     ) -> dict[str, Any]:
-        name = str(product.get("name") or product.get("title") or "商品").strip()
-        title = str(copy.get("title") or f"{name}营销标题").strip()
-        selling_points = copy.get("sellingPoints") or [
-            product.get("sellingPoint") or "核心卖点"
-        ]
-        first_selling_point = str(selling_points[0] or "核心卖点").strip()
+        fields = self._product_fields(product)
+        title = str(copy.get("title") or f"{fields['name']} Export Listing").strip()
+        selling_points = copy.get("sellingPoints") or [fields["selling_point"]]
+        first_selling_point = str(selling_points[0] or fields["selling_point"]).strip()
         prompt = (
-            "你是短视频脚本助手。\n"
-            "请输出 15 到 25 秒的商品口播脚本。\n"
-            "必须严格返回 JSON，不要输出解释。\n"
+            "You are an export cold-email and inquiry-reply assistant.\n"
+            "Write a short English outreach email for overseas buyers.\n"
+            "Return strict JSON only, no explanation.\n"
             'JSON schema: {"script":"string"}\n'
-            f"商品名称: {name}\n"
-            f"营销标题: {title}\n"
-            f"卖点列表: {selling_points}"
+            "Requirements: greeting, product value, one proof point, soft CTA, professional tone.\n"
+            f"Product name: {fields['name']}\n"
+            f"Listing title: {title}\n"
+            f"Selling points: {selling_points}\n"
+            f"Target market: {fields['audience']}\n"
+            f"Scenario: {fields['scenario']}"
         )
         result = await self._request_json(prompt)
         if self._has_keys(result, "script"):
@@ -79,8 +161,12 @@ class ModelScopeTextProvider:
         return self._with_generation_meta(
             {
                 "script": (
-                    f"开场展示{name}，突出{title}，中段讲解"
-                    f"{first_selling_point}，结尾引导立即下单。"
+                    f"Dear Buyer,\n\n"
+                    f"We supply {fields['name']} for {fields['audience']}. "
+                    f"Key advantage: {first_selling_point}. "
+                    f"It fits {fields['scenario']} use cases. "
+                    f"If you are sourcing now, I can send MOQ, lead time and FOB details.\n\n"
+                    f"Best regards"
                 ),
             },
             fallback_used=True,
@@ -93,17 +179,17 @@ class ModelScopeTextProvider:
         copy: dict[str, Any],
         script: dict[str, Any],
     ) -> dict[str, Any]:
-        name = str(product.get("name") or product.get("title") or "商品").strip()
-        title = str(copy.get("title") or f"{name}营销标题").strip()
+        fields = self._product_fields(product)
+        title = str(copy.get("title") or f"{fields['name']} Export Listing").strip()
         script_text = str(script.get("script") or "").strip()
         prompt = (
-            "你是商品海报提示词助手。\n"
-            "请输出适合文生图模型直接使用的中文海报提示词。\n"
-            "必须严格返回 JSON，不要输出解释。\n"
+            "You are a product visual prompt assistant for export catalogs.\n"
+            "Write one English image prompt for a clean B2B product poster / main image.\n"
+            "Return strict JSON only, no explanation.\n"
             'JSON schema: {"prompt":"string"}\n'
-            f"商品名称: {name}\n"
-            f"营销标题: {title}\n"
-            f"脚本摘要: {script_text}"
+            f"Product name: {fields['name']}\n"
+            f"Listing title: {title}\n"
+            f"Email summary: {script_text}"
         )
         result = await self._request_json(prompt)
         if self._has_keys(result, "prompt"):
@@ -111,7 +197,10 @@ class ModelScopeTextProvider:
 
         return self._with_generation_meta(
             {
-                "prompt": f"{name}商品海报，突出{title}，画面高级干净，结合脚本信息：{script_text}",
+                "prompt": (
+                    f"Professional export product poster of {fields['name']}, clean studio lighting, "
+                    f"highlight {title}, commercial B2B style, high detail, white background"
+                ),
             },
             fallback_used=True,
             reason=result.get("_meta", {}).get("reason", "invalid_json_response"),
@@ -133,7 +222,7 @@ class ModelScopeTextProvider:
                     "messages": [
                         {
                             "role": "system",
-                            "content": "请严格输出 JSON，不要输出 markdown 或解释。",
+                            "content": "Return strict JSON only. No markdown. No explanation.",
                         },
                         {"role": "user", "content": prompt},
                     ],
@@ -154,11 +243,13 @@ class ModelScopeTextProvider:
         timeout: float,
         token: str,
         base_url: str,
+        trust_env: bool = True,
     ) -> httpx.AsyncClient:
         return httpx.AsyncClient(
             base_url=base_url,
             timeout=timeout,
             transport=self._transport,
+            trust_env=trust_env,
             headers={
                 "Authorization": f"Bearer {token}",
                 "Content-Type": "application/json",

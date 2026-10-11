@@ -59,6 +59,23 @@ class FakeBatchProvider:
             },
         }
 
+    async def generate_video_asset(self, workflow_task_id, product, script):
+        return {
+            "outputType": "video_asset",
+            "outputData": {
+                "assetType": "video",
+                "storageProvider": "local",
+                "objectKey": f"generated/{workflow_task_id}.mp4",
+                "fileName": f"{workflow_task_id}.mp4",
+                "mimeType": "video/mp4",
+                "durationSec": 8,
+                "metadata": {
+                    "publicUrl": f"/storage/assets/{workflow_task_id}.mp4",
+                    "prompt": script["script"],
+                },
+            },
+        }
+
 
 class BatchGenerationGraphTests(unittest.IsolatedAsyncioTestCase):
     async def test_batch_graph_generates_copy_script_and_image_prompt(self):
@@ -121,6 +138,58 @@ class BatchGenerationGraphTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(output_by_type["video_script"]["generationMeta"]["fallbackUsed"])
         self.assertEqual(output_by_type["video_script"]["generationMeta"]["reason"], "invalid_json_response")
         self.assertEqual(output_by_type["image_prompt"]["generationMeta"]["model"], "Qwen/Qwen2.5-7B-Instruct")
+
+    async def test_batch_graph_generates_video_from_generated_script(self):
+        graph = build_batch_generation_graph(FakeBatchProvider())
+        state = build_initial_batch_state(
+            workflow_task_id="wf_batch_video_001",
+            job_item={
+                "jobItemId": "item_video_001",
+                "jobId": "job_video_001",
+                "productId": "product_video_001",
+                "contentTypes": ["marketing_copy", "video_asset"],
+                "productSnapshot": {
+                    "id": "product_video_001",
+                    "name": "工业连接器",
+                    "sellingPoint": "高防护等级",
+                },
+            },
+        )
+
+        result = await graph.ainvoke(state)
+        output_types = [item["outputType"] for item in result["outputs"]]
+
+        self.assertEqual(output_types, ["marketing_copy", "video_asset"])
+        self.assertEqual(
+            result["outputs"][-1]["outputData"]["metadata"]["publicUrl"],
+            "/storage/assets/wf_batch_video_001.mp4",
+        )
+
+    async def test_batch_graph_respects_selected_content_types(self):
+        graph = build_batch_generation_graph(FakeBatchProvider())
+        state = build_initial_batch_state(
+            workflow_task_id="wf_batch_003",
+            job_item={
+                "jobItemId": "item_003",
+                "jobId": "job_003",
+                "productId": "product_003",
+                "contentTypes": ["marketing_copy"],
+                "productSnapshot": {
+                    "id": "product_003",
+                    "name": "工业连接器",
+                    "sellingPoint": "高防护等级",
+                },
+            },
+        )
+
+        result = await graph.ainvoke(state)
+        output_types = [item["outputType"] for item in result["outputs"]]
+
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(output_types, ["marketing_copy"])
+        self.assertIsNotNone(result["copy"])
+        self.assertIsNone(result["script"])
+        self.assertIsNone(result["image_prompt"])
 
 
 if __name__ == "__main__":

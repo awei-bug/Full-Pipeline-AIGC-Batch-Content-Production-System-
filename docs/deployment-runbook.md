@@ -232,3 +232,60 @@ npm run modelscope:probe-video -- --poll-seconds 0 --models "Wan-AI/Wan2.1-T2V-1
 - 统一日志与 trace id
 - 生产级进程守护配置
 - 前端构建产物自动发布
+
+## 9. 本地一键启动排障（Windows）
+
+双击根目录 `一键启动.bat` 时，链路是 `npm run local:start` → `dev.ps1 content` →
+`scripts/start-local-stack.ps1`。最后一个脚本用 `Start-Process` 以隐藏窗口拉起
+`api-server`、`ai-orchestrator`、`studio-web`，三者健康检查全部通过后才写
+`.local-stack/state.json`；bat 依据该文件里的 `urls.studio` 打开浏览器。
+因此**没有 state.json 就等于某个服务没起来**，此时 bat 会打印最近的 err 日志。
+
+三个已经修复的坑，改动启动脚本时不要回退：
+
+- `Start-Process -ArgumentList` 会把数组按空格拼接，且**不自动给元素加引号**。
+  仓库根目录 `内容生成 Multi-Agent 协同编排系统` 含空格，`-File` 的脚本路径会被截断成
+  `F:\Python_code\内容生成`，子进程报"该文件不具有 .ps1 扩展名"后立即退出。
+  现在的写法是传入手工拼好的单一参数字符串，并自行给路径加引号。
+- `scripts/*.ps1` 与根目录 `dev.ps1` 都是**无 BOM 的 UTF-8**，Windows PowerShell 5.1 会按
+  系统 ANSI（GBK）解码。这些文件因此必须保持纯 ASCII；需要中文时用 `[char]0x...`
+  拼接（`dev.ps1` 里的 shop 路径已有先例），不要直接写中文注释或中文字符串。
+- 若进程环境里同时存在 `HTTPS_PROXY` 与 `https_proxy` 这类仅大小写不同的重复变量，
+  `Start-Process` 会抛"已添加项。字典中的关键字…"并中断启动。
+  先清理重复的环境变量再启动。
+
+排障顺序：看控制台输出 → 看 `.local-stack\*.err.log` → 用 `npm run local:status`
+确认各服务状态 → 需要重启时先 `npm run local:stop`。服务已在运行时，
+`start-local-stack.ps1` 会直接拒绝重复启动并提示先执行 `npm run stack:stop`。
+
+## 10. 桌面应用启动（本地单机）
+
+`npm run app:install` 创建一个桌面图标（开始菜单一份），双击即启动服务并打开独立应用窗口，
+**关闭窗口即整体退出**。用法见根 README「快速开始（桌面应用）」。维护这条链路时有这些硬约束：
+
+- `app-shell.vbs`、`scripts/launch-app.ps1`、`scripts/stop-app.ps1`、
+  `scripts/install-app-shortcuts.ps1` 必须保持**纯 ASCII**（同第 9 节的编码约束）。
+  中文显示名用 Unicode 码点拼接，例如快捷方式名
+  `New-Text @(0x5185,0x5BB9,0x521B,0x4F5C,0x5E73,0x53F0)`。
+- 桌面只放**一个**图标：关闭窗口就是退出，不要再加「停止」图标。需要命令行停止时用
+  `npm run app:stop`；install 脚本会自动清理旧版留在桌面的停止快捷方式。
+- 关闭应用窗口时，匹配条件必须同时限定**浏览器进程名**与**完整 profile 路径**。
+  早期版本只判断「命令行里出现 profile 目录名」，会把任何提到该字符串的 PowerShell 进程
+  一起杀掉，包括正在执行停止逻辑的父进程，表现为服务停不下来、日志写到一半中断。
+- 实例检测**不要依赖命令行内容**（不同启动方式下命令行形状不同，实测脚本内联调用就会漏判）。
+  `app-shell.pid` 必须同时记录 **pid 与进程启动时间（yyyyMMddHHmmss）**，两者匹配才算同一实例；
+  pid 文件在启动服务之前就要写好，否则双击两次会产生两个托盘与两次关停。
+- `.local-stack` 下的状态文件清理一律用 `[System.IO.File]::Delete()` 而不是 `Remove-Item`：
+  某些工具会把 `Remove-Item` 包装成回收站操作并在失败时中断脚本，导致后续步骤（关窗口、停服务）
+  被跳过。
+- PowerShell 脚本里**禁止**用 `$Pid`/`$PID` 作为参数名或循环变量名（内置只读变量）。
+  `scripts/local-stack-common.ps1` 曾经因为 `Stop-ProcessTree([int]$Pid)` 参数绑定报错，
+  导致「杀进程树」这一步静默失效，只能靠端口兜底。
+- 启动器把子进程交给 `start-local-stack.ps1`，因此第 9 节的环境变量重复键问题同样适用：
+  环境里若同时存在 `HTTPS_PROXY` 与 `https_proxy`，`Start-Process` 会抛
+  「已添加项。字典中的关键字」，此时启动器会弹窗并指向日志。
+- 应用图标是生成物：改图纸后必须跑 `python scripts/make-app-icon.py`（需要 Pillow），
+  它会重写 `public/favicon.ico` 与 `public/app-icon.ico`，随后 `npm run app:install` 重建快捷方式。
+  快捷方式只引用 `app-icon.ico`——Windows 按路径缓存图标，沿用同名文件会让桌面继续显示旧图。
+
+排障入口：`.local-stack/desktop-launch.log`（启动器与停止器的完整 transcript）。

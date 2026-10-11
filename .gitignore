@@ -15,7 +15,9 @@ storage/temp/
 demo/tmp/
 *.db
 *.log
+*.err
 npm-debug.log*
 .superpowers/
+rag.db
 .env
 .env.*

@@ -24,7 +24,7 @@ test("export service returns xlsx workbook payload for content outputs", async (
   const result = await service.exportJob("job_001");
 
   assert.equal(result.jobId, "job_001");
-  assert.equal(result.fileName, "job_001-批量内容结果.xlsx");
+  assert.equal(result.fileName, "job_001-外贸内容结果.xlsx");
   assert.equal(
     result.contentType,
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

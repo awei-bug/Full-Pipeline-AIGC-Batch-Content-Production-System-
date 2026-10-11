@@ -41,13 +41,13 @@ function Get-LocalStackRuntimeState([object]$State) {
       continue
     }
 
-    try {
-      $null = Get-Process -Id ([int]$processInfo.pid) -ErrorAction Stop
+    # SilentlyContinue keeps dead pids from writing errors into the transcript.
+    $live = Get-Process -Id ([int]$processInfo.pid) -ErrorAction SilentlyContinue
+    if ($null -ne $live) {
       $runningProcesses += [pscustomobject]@{
         name = [string]$processInfo.name
         pid = [int]$processInfo.pid
       }
-    } catch {
     }
   }
 
@@ -71,13 +71,13 @@ function Get-LocalStackRuntimeState([object]$State) {
   }
 }
 
-function Stop-ProcessTree([int]$Pid) {
-  if ($Pid -le 0) {
+function Stop-ProcessTree([int]$ProcessId) {
+  if ($ProcessId -le 0) {
     return
   }
 
   Start-Process taskkill.exe `
-    -ArgumentList @("/PID", "$Pid", "/T", "/F") `
+    -ArgumentList @("/PID", "$ProcessId", "/T", "/F") `
     -WindowStyle Hidden `
     -Wait | Out-Null
 }
@@ -165,7 +165,7 @@ function Stop-LocalStackProcesses(
     }
 
     try {
-      Stop-ProcessTree -Pid ([int]$processInfo.pid)
+      Stop-ProcessTree -ProcessId ([int]$processInfo.pid)
     } catch {
     }
   }
@@ -184,7 +184,7 @@ function Stop-LocalStackProcesses(
 
     foreach ($processId in @($runtime.runningProcesses | ForEach-Object { [int]$_.pid } | Sort-Object -Unique)) {
       try {
-        Stop-ProcessTree -Pid ([int]$processId)
+        Stop-ProcessTree -ProcessId ([int]$processId)
       } catch {
       }
     }

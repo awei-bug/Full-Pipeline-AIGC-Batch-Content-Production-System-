@@ -17,7 +17,7 @@ class AgnesTextProviderTests(unittest.IsolatedAsyncioTestCase):
             requests.append(request)
             self.assertEqual(request.url.path, "/v1/chat/completions")
             payload = json.loads(request.content.decode("utf-8"))
-            self.assertEqual(payload["model"], "agnes-2.0-flash")
+            self.assertEqual(payload["model"], "agnes-2.5-flash")
             return httpx.Response(
                 200,
                 json={

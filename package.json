@@ -5,7 +5,10 @@
   "type": "module",
   "workspaces": [
     "apps/studio-web",
-    "apps/api-server"
+    "apps/api-server",
+    "apps/commerce-api",
+    "apps/seller-admin",
+    "apps/storefront"
   ],
   "scripts": {
     "dev": "npm --workspace apps/api-server run dev",
@@ -14,9 +17,27 @@
     "build:studio": "npm --workspace apps/studio-web run build",
     "dev:api": "npm --workspace apps/api-server run dev",
     "start:api": "npm --workspace apps/api-server run start",
+    "dev:commerce": "npm --workspace apps/commerce-api run dev",
+    "start:commerce": "npm --workspace apps/commerce-api run start",
+    "dev:seller": "npm --workspace apps/seller-admin run dev",
+    "build:seller": "npm --workspace apps/seller-admin run build",
+    "dev:storefront": "npm --workspace apps/storefront run dev",
+    "build:storefront": "npm --workspace apps/storefront run build",
+    "test:commerce": "npm --workspace apps/commerce-api run test",
     "dev:orchestrator": "py -m uvicorn app.main:app --host 127.0.0.1 --port 8110 --reload --app-dir apps/ai-orchestrator",
     "stack:start": "powershell -ExecutionPolicy Bypass -File scripts/start-local-stack.ps1",
     "stack:stop": "powershell -ExecutionPolicy Bypass -File scripts/stop-local-stack.ps1",
+    "local:start": "powershell -ExecutionPolicy Bypass -File dev.ps1 content",
+    "local:full": "powershell -ExecutionPolicy Bypass -File dev.ps1 full",
+    "local:hub": "powershell -ExecutionPolicy Bypass -File dev.ps1 hub",
+    "local:shop": "powershell -ExecutionPolicy Bypass -File dev.ps1 shop",
+    "local:status": "powershell -ExecutionPolicy Bypass -File dev.ps1 status",
+    "local:stop": "powershell -ExecutionPolicy Bypass -File dev.ps1 stop",
+    "app:install": "powershell -ExecutionPolicy Bypass -File scripts/install-app-shortcuts.ps1",
+    "app:install:autostart": "powershell -ExecutionPolicy Bypass -File scripts/install-app-shortcuts.ps1 -AutoStart",
+    "app:uninstall": "powershell -ExecutionPolicy Bypass -File scripts/install-app-shortcuts.ps1 -Remove",
+    "app:launch": "powershell -ExecutionPolicy Bypass -File scripts/launch-app.ps1",
+    "app:stop": "powershell -ExecutionPolicy Bypass -File scripts/stop-app.ps1",
     "stack:smoke": "powershell -ExecutionPolicy Bypass -File scripts/smoke-local-stack.ps1",
     "stack:smoke:image": "powershell -ExecutionPolicy Bypass -File scripts/smoke-local-stack.ps1 -RequestType text_to_image",
     "stack:smoke:video": "powershell -ExecutionPolicy Bypass -File scripts/smoke-local-stack.ps1 -RequestType text_to_video",
@@ -25,14 +46,13 @@
     "test:probe-video": "node --test scripts/modelscope-video-probe.test.js",
     "db:init": "node scripts/init-postgres.js",
     "db:init:core": "node scripts/init-core-schema.js",
+    "db:init:commerce": "node scripts/init-commerce-schema.js",
     "data:reset": "node scripts/reset-generated-data.js"
   },
   "dependencies": {
-    "@fastify/formbody": "^8.0.2",
-    "@fastify/static": "^8.2.0",
-    "fastify": "^5.6.1",
-    "gifenc": "^1.0.3",
-    "pg": "^8.16.3",
-    "sharp": "^0.34.2"
+    "pg": "^8.16.3"
+  },
+  "devDependencies": {
+    "playwright": "^1.62.1"
   }
 }

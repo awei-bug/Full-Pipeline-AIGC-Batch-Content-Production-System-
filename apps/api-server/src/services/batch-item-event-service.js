@@ -22,6 +22,18 @@ export async function applyBatchItemEvent({
     throw error;
   }
 
+  const existingJobItem = await contentJobsRepository.getJobItemById?.(jobItemId);
+  const targetStatus = normalizedStatus === "succeeded" ? "success" : normalizedStatus;
+  if (existingJobItem?.status === targetStatus) {
+    const job = await contentJobsRepository.getJobById?.(existingJobItem.jobId);
+    return {
+      jobItem: existingJobItem,
+      job,
+      outputs: [],
+      idempotent: true,
+    };
+  }
+
   if (normalizedStatus === "succeeded") {
     const resultSummary = {
       usage: event?.usage || {},
@@ -35,7 +47,7 @@ export async function applyBatchItemEvent({
     });
     const outputs = await contentJobsRepository.createOutputs(jobItemId, normalizeOutputs(event?.outputs));
     const job = jobItem ? await contentJobsRepository.getJobById?.(jobItem.jobId) : null;
-    return { jobItem, job, outputs };
+    return { jobItem, job, outputs, idempotent: false };
   }
 
   if (normalizedStatus === "failed") {
@@ -48,7 +60,7 @@ export async function applyBatchItemEvent({
       },
     });
     const job = jobItem ? await contentJobsRepository.getJobById?.(jobItem.jobId) : null;
-    return { jobItem, job, outputs: [] };
+    return { jobItem, job, outputs: [], idempotent: false };
   }
 
   const error = new Error("Unsupported batch item event status");

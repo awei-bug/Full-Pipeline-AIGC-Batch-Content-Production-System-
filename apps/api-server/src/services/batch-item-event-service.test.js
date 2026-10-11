@@ -148,3 +148,31 @@ test("batch item failed event marks item failed without outputs", async () => {
   const jobOutputs = await repository.listOutputsByJobId(jobItem.jobId);
   assert.equal(jobOutputs.length, 0);
 });
+
+test("replayed terminal event is idempotent and does not duplicate outputs", async () => {
+  const { repository, jobItem } = await createBatchJobContext();
+  const event = {
+    jobItemId: jobItem.id,
+    status: "succeeded",
+    outputs: [
+      {
+        outputType: "marketing_copy",
+        outputData: { title: "夏季清爽防晒喷雾" },
+      },
+    ],
+  };
+
+  const first = await applyBatchItemEvent({
+    contentJobsRepository: repository,
+    event,
+  });
+  const second = await applyBatchItemEvent({
+    contentJobsRepository: repository,
+    event,
+  });
+
+  assert.equal(first.idempotent, false);
+  assert.equal(second.idempotent, true);
+  assert.equal(second.outputs.length, 0);
+  assert.equal((await repository.listOutputsByJobId(jobItem.jobId)).length, 1);
+});

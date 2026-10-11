@@ -100,8 +100,17 @@ function Start-StackProcess(
     -environment $environment `
     -secretEnvNames $secretEnvNames
 
+  if ([string]::IsNullOrWhiteSpace($runScriptPath)) {
+    throw "Failed to build the run script path for $name."
+  }
+
+  # Keep this file ASCII-only: it has no BOM and PowerShell 5.1 decodes non-ASCII
+  # bytes as ANSI. Start-Process joins -ArgumentList with spaces and adds no quotes,
+  # and this repo root path contains a space, so the script path must be quoted here
+  # or it gets truncated before the ".ps1" extension and the child exits immediately.
+  $argumentLine = '-NoProfile -ExecutionPolicy Bypass -File "{0}"' -f $runScriptPath
   return Start-Process powershell.exe `
-    -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $runScriptPath) `
+    -ArgumentList $argumentLine `
     -WorkingDirectory $workingDir `
     -RedirectStandardOutput $stdoutLog `
     -RedirectStandardError $stderrLog `
@@ -160,17 +169,37 @@ if (-not $agnesToken -and -not $modelscopeToken) {
 
 $apiPort = Get-FreePort 3100
 $orchestratorPort = Get-FreePort 8110
-$studioPort = Get-FreePort 5173
+$studioPort = Get-FreePort 5201
 
 $apiBaseUrl = "http://127.0.0.1:$apiPort"
 $orchestratorBaseUrl = "http://127.0.0.1:$orchestratorPort"
 $assetsDir = Join-Path $rootDir "storage/generated"
+
+$internalCallbackToken = Get-EnvValue "INTERNAL_CALLBACK_TOKEN"
+if ([string]::IsNullOrWhiteSpace($internalCallbackToken)) {
+  $internalCallbackToken = "local-dev-internal-token"
+}
 
 $apiEnv = @{
   API_PORT = "$apiPort"
   API_HOST = "127.0.0.1"
   AI_ORCHESTRATOR_BASE_URL = $orchestratorBaseUrl
   AI_ORCHESTRATOR_ASSETS_DIR = $assetsDir
+  INTERNAL_CALLBACK_TOKEN = $internalCallbackToken
+}
+$forwardedIntegrationEnvNames = @(
+  "DATA_HUB_URL",
+  "DATA_HUB_TENANT_SLUG",
+  "DATA_HUB_TIMEOUT_MS",
+  "COMMERCE_IMPORT_URL",
+  "COMMERCE_TENANT_SLUG",
+  "COMMERCE_IMPORT_TIMEOUT_MS"
+)
+foreach ($integrationKey in $forwardedIntegrationEnvNames) {
+  $integrationValue = Get-EnvValue $integrationKey
+  if (-not [string]::IsNullOrWhiteSpace($integrationValue)) {
+    $apiEnv[$integrationKey] = $integrationValue
+  }
 }
 $forwardedDbEnvNames = @("PGHOST", "PGPORT", "PGUSER", "PGDATABASE", "POSTGRES_HOST", "POSTGRES_PORT", "POSTGRES_USER", "POSTGRES_DB")
 foreach ($dbKey in $forwardedDbEnvNames) {
@@ -186,6 +215,7 @@ $orchestratorEnv = @{
   AI_TEXT_PROVIDER = $textProvider
   AI_IMAGE_PROVIDER = $imageProvider
   AI_VIDEO_PROVIDER = $videoProvider
+  INTERNAL_CALLBACK_TOKEN = $internalCallbackToken
   PYTHONUTF8 = "1"
 }
 
@@ -195,7 +225,10 @@ $secretEnvNames = @(
   "OPENAI_API_KEY",
   "DATABASE_URL",
   "PGPASSWORD",
-  "POSTGRES_PASSWORD"
+  "POSTGRES_PASSWORD",
+  "INTERNAL_CALLBACK_TOKEN",
+  "DATA_HUB_TOKEN",
+  "COMMERCE_IMPORT_TOKEN"
 )
 
 $studioEnv = @{

@@ -1,0 +1,17 @@
+services:
+  ip-redis:
+    image: redis/redis-stack-server:7.4.0-v8
+    ports:
+      - "127.0.0.1:6379:6379"
+    environment:
+      REDIS_ARGS: "--appendonly yes --save 60 1"
+    volumes:
+      - ip-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+
+volumes:
+  ip-redis-data:

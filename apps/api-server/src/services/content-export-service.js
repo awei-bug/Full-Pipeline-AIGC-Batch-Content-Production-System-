@@ -11,20 +11,22 @@ function buildWorksheetRows(rows) {
     videoScript: row.videoScript || "",
     imagePrompt: row.imagePrompt || "",
     imageUrl: row.imageUrl || "",
+    videoUrl: row.videoUrl || "",
   }));
 }
 
 async function buildWorkbookBuffer(rows) {
   const workbook = new ExcelJS.Workbook();
-  const worksheet = workbook.addWorksheet("批量内容结果");
+  const worksheet = workbook.addWorksheet("外贸内容结果");
 
   worksheet.columns = [
-    { header: "商品ID", key: "productId", width: 24 },
-    { header: "商品名称", key: "productName", width: 24 },
-    { header: "营销文案标题", key: "marketingCopyTitle", width: 32 },
-    { header: "视频脚本", key: "videoScript", width: 50 },
-    { header: "海报提示词", key: "imagePrompt", width: 50 },
-    { header: "图片链接", key: "imageUrl", width: 42 },
+    { header: "产品ID", key: "productId", width: 24 },
+    { header: "产品名称", key: "productName", width: 24 },
+    { header: "英文Listing标题", key: "marketingCopyTitle", width: 32 },
+    { header: "开发信/询盘回复", key: "videoScript", width: 50 },
+    { header: "产品图提示词", key: "imagePrompt", width: 50 },
+    { header: "产品图链接", key: "imageUrl", width: 42 },
+    { header: "产品视频链接", key: "videoUrl", width: 42 },
   ];
 
   worksheet.addRows(buildWorksheetRows(rows));
@@ -66,7 +68,7 @@ export function createContentExportService({ repository }) {
         jobId: normalizedJobId,
         rows,
         buffer,
-        fileName: `${normalizedJobId}-批量内容结果.xlsx`,
+        fileName: `${normalizedJobId}-外贸内容结果.xlsx`,
         contentType: EXCEL_CONTENT_TYPE,
       };
     },

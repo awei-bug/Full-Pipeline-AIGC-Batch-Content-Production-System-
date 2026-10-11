@@ -89,6 +89,10 @@ export class MemoryContentJobsRepository {
     return this.jobs.find((item) => item.id === jobId) || null;
   }
 
+  async getJobItemById(jobItemId) {
+    return this.jobItems.find((item) => item.id === jobItemId) || null;
+  }
+
   async updateJobItemResult({
     jobItemId,
     status,
@@ -127,6 +131,12 @@ export class MemoryContentJobsRepository {
     return this.outputs.filter((item) => jobItemIds.includes(item.jobItemId));
   }
 
+  async listJobItemsByJobId(jobId) {
+    return this.jobItems
+      .filter((item) => item.jobId === jobId)
+      .map((item) => ({ ...item }));
+  }
+
   async listExportRowsByJobId(jobId) {
     const jobItems = this.jobItems.filter((item) => item.jobId === jobId);
     return jobItems.map((jobItem) => {
@@ -138,6 +148,7 @@ export class MemoryContentJobsRepository {
       const videoScript = outputs.find((item) => item.outputType === "video_script");
       const imagePrompt = outputs.find((item) => item.outputType === "image_prompt");
       const imageAsset = outputs.find((item) => item.outputType === "image_asset");
+      const videoAsset = outputs.find((item) => item.outputType === "video_asset");
 
       return {
         productId: jobItem.productId,
@@ -146,6 +157,7 @@ export class MemoryContentJobsRepository {
         videoScript: videoScript?.outputData?.script || "",
         imagePrompt: imagePrompt?.outputData?.prompt || "",
         imageUrl: imageAsset?.outputData?.metadata?.publicUrl || "",
+        videoUrl: videoAsset?.outputData?.metadata?.publicUrl || "",
       };
     });
   }
@@ -290,6 +302,24 @@ export class PostgresContentJobsRepository {
     return mapJobRow(result.rows[0]);
   }
 
+  async getJobItemById(jobItemId) {
+    const result = await this.pool.query(
+      `select
+         id,
+         job_id,
+         product_id,
+         status,
+         result_summary,
+         created_at,
+         updated_at
+       from content_platform.content_job_items
+       where id = $1`,
+      [jobItemId],
+    );
+
+    return result.rowCount ? mapJobItemRow(result.rows[0]) : null;
+  }
+
   async updateJobItemResult({
     jobItemId,
     status,
@@ -364,6 +394,25 @@ export class PostgresContentJobsRepository {
     return result.rows.map(mapOutputRow);
   }
 
+  async listJobItemsByJobId(jobId) {
+    const result = await this.pool.query(
+      `select
+         id,
+         job_id,
+         product_id,
+         status,
+         result_summary,
+         created_at,
+         updated_at
+       from content_platform.content_job_items
+       where job_id = $1
+       order by created_at asc`,
+      [jobId],
+    );
+
+    return result.rows.map(mapJobItemRow);
+  }
+
   async listExportRowsByJobId(jobId) {
     const result = await this.pool.query(
       `select
@@ -372,7 +421,8 @@ export class PostgresContentJobsRepository {
          max(case when o.output_type = 'marketing_copy' then o.output_data->>'title' end) as marketing_copy_title,
          max(case when o.output_type = 'video_script' then o.output_data->>'script' end) as video_script,
          max(case when o.output_type = 'image_prompt' then o.output_data->>'prompt' end) as image_prompt,
-         max(case when o.output_type = 'image_asset' then o.output_data->'metadata'->>'publicUrl' end) as image_url
+         max(case when o.output_type = 'image_asset' then o.output_data->'metadata'->>'publicUrl' end) as image_url,
+         max(case when o.output_type = 'video_asset' then o.output_data->'metadata'->>'publicUrl' end) as video_url
        from content_platform.content_job_items i
        join content_platform.products p on p.id = i.product_id
        left join content_platform.content_outputs o on o.job_item_id = i.id
@@ -389,6 +439,7 @@ export class PostgresContentJobsRepository {
       videoScript: row.video_script || "",
       imagePrompt: row.image_prompt || "",
       imageUrl: row.image_url || "",
+      videoUrl: row.video_url || "",
     }));
   }
 

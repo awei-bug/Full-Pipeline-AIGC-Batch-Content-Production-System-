@@ -6,6 +6,8 @@ const apiBaseUrl =
 
 export { apiBaseUrl };
 
+const DEFAULT_EXPORT_FILE_NAME = "外贸内容结果.xlsx";
+
 async function request(path, options = {}) {
   const response = await fetch(`${apiBaseUrl}${path}`, {
     headers: {
@@ -40,13 +42,44 @@ async function requestBlob(path, options = {}) {
   }
 
   const blob = await response.blob();
-  return {
-    blob,
-    fileName: decodeURIComponent(
-      (response.headers.get("content-disposition") || "")
-        .match(/filename\*=UTF-8''([^;]+)/i)?.[1] || "批量内容结果.xlsx",
-    ),
-  };
+  const disposition = response.headers.get("content-disposition") || "";
+  const fileName =
+    decodeURIComponent(disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1] || "") ||
+    disposition.match(/filename="([^"]+)"/i)?.[1] ||
+    DEFAULT_EXPORT_FILE_NAME;
+  return { blob, fileName };
+}
+
+function parseCsvLine(line) {
+  const values = [];
+  let current = "";
+  let inQuotes = false;
+
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    const next = line[index + 1];
+
+    if (char === '"') {
+      if (inQuotes && next === '"') {
+        current += '"';
+        index += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+
+    if (char === "," && !inQuotes) {
+      values.push(current.trim());
+      current = "";
+      continue;
+    }
+
+    current += char;
+  }
+
+  values.push(current.trim());
+  return values;
 }
 
 export function parseCsvText(csvText) {
@@ -56,12 +89,16 @@ export function parseCsvText(csvText) {
     .filter(Boolean);
 
   if (lines.length < 2) {
-    throw new Error("至少需要一行表头和一行商品数据。");
+    throw new Error("至少需要一行表头和一行产品数据。");
   }
 
-  const headers = lines[0].split(",").map((item) => item.trim());
+  const headers = parseCsvLine(lines[0]).map((item) => item.trim()).filter(Boolean);
+  if (headers.length === 0) {
+    throw new Error("CSV 表头不能为空。");
+  }
+
   const rows = lines.slice(1).map((line) => {
-    const values = line.split(",").map((item) => item.trim());
+    const values = parseCsvLine(line);
     return headers.reduce((result, header, index) => {
       result[header] = values[index] ?? "";
       return result;
@@ -90,7 +127,7 @@ export async function parseImportFile(file) {
     throw new Error("请先选择需要导入的文件。");
   }
 
-  const normalizedName = String(file.name || "products.csv").trim() || "products.csv";
+  const normalizedName = String(file.name || "export-products.csv").trim() || "export-products.csv";
   const fileExtension = normalizedName.split(".").pop()?.toLowerCase() || "";
 
   if (fileExtension === "csv") {
@@ -115,7 +152,7 @@ export async function parseImportFile(file) {
     });
     const result = normalizeSheetRows(rows);
     if (result.rows.length === 0) {
-      throw new Error("导入文件中没有可用的商品数据。");
+      throw new Error("导入文件中没有可用的产品数据。");
     }
     return {
       ...result,
@@ -127,20 +164,56 @@ export async function parseImportFile(file) {
 }
 
 export function buildFieldMapping(headers) {
-  const list = Array.isArray(headers) ? headers : [];
-  const findHeader = (patterns) =>
-    list.find((header) => patterns.some((pattern) => header.toLowerCase().includes(pattern))) ||
-    list[0] ||
-    "";
+  const list = Array.isArray(headers) ? headers.map((item) => String(item || "").trim()) : [];
+  const used = new Set();
 
-  return {
-    name: findHeader(["name", "title", "商品", "名称"]),
-    sellingPoint: findHeader(["selling", "highlight", "卖点", "亮点"]),
-    price: findHeader(["price", "售价", "价格"]),
-    category: findHeader(["category", "类目", "分类"]),
-    audience: findHeader(["audience", "人群", "客群"]),
-    scenario: findHeader(["scenario", "scene", "场景"]),
+  const findHeader = (patterns) => {
+    const match = list.find((header) => {
+      if (used.has(header)) {
+        return false;
+      }
+      const lower = header.toLowerCase();
+      return patterns.some((pattern) => lower.includes(String(pattern).toLowerCase()));
+    });
+    if (match) {
+      used.add(match);
+      return match;
+    }
+    return "";
   };
+
+  const mapping = {
+    name: findHeader(["name", "title", "product", "sku", "商品", "名称", "产品"]),
+    sellingPoint: findHeader(["selling", "highlight", "advantage", "feature", "卖点", "亮点", "优势"]),
+    price: findHeader(["price", "fob", "moq", "售价", "价格", "报价"]),
+    category: findHeader(["category", "hs", "industry", "类目", "分类", "品类"]),
+    audience: findHeader(["audience", "market", "country", "region", "人群", "市场", "国家"]),
+    scenario: findHeader(["scenario", "scene", "application", "use", "场景", "用途", "应用"]),
+  };
+
+  if (!mapping.name) {
+    throw new Error("未能识别产品名称字段，请检查表头是否包含名称/产品/Name。");
+  }
+
+  return mapping;
+}
+
+export async function sendChatMessage(messages) {
+  return request("/api/chat", {
+    method: "POST",
+    body: JSON.stringify({ messages }),
+  });
+}
+
+export async function startContentWorkflow(payload) {
+  return request("/api/content-workflows", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getContentWorkflow(workflowId) {
+  return request(`/api/content-workflows/${encodeURIComponent(workflowId)}`);
 }
 
 export async function listImportBatches() {
@@ -186,4 +259,23 @@ export async function listContentOutputs(jobId) {
 
 export async function exportContentJob(jobId) {
   return requestBlob(`/api/content-exports/${encodeURIComponent(jobId)}`);
+}
+
+export async function previewListingPack(jobId) {
+  return request(`/api/listing-packs/${encodeURIComponent(jobId)}/preview`);
+}
+
+export async function pushListingPack(jobId, { prices = {}, publish = false } = {}) {
+  return request(`/api/listing-packs/${encodeURIComponent(jobId)}/push`, {
+    method: "POST",
+    body: JSON.stringify({ prices, publish }),
+  });
+}
+
+export async function downloadListingPack(jobId, { prices = {}, publish = false } = {}) {
+  return requestBlob(`/api/listing-packs/${encodeURIComponent(jobId)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ prices, publish }),
+  });
 }

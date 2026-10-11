@@ -10,6 +10,51 @@ from app.providers.modelscope_text import ModelScopeTextProvider
 
 
 class ModelScopeTextProviderTests(unittest.IsolatedAsyncioTestCase):
+    async def test_chat_forwards_messages_and_returns_plain_text(self):
+        def handler(request: httpx.Request) -> httpx.Response:
+            self.assertEqual(request.url.path, "/v1/chat/completions")
+            payload = json.loads(request.content.decode("utf-8"))
+            self.assertEqual(payload["model"], "Qwen/Qwen2.5-7B-Instruct")
+            self.assertEqual(
+                payload["messages"],
+                [
+                    {"role": "system", "content": "你是宣传文案助手。"},
+                    {"role": "user", "content": "帮我宣传一款通勤杯。"},
+                ],
+            )
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {
+                            "message": {
+                                "content": "主标题：通勤轻一点\n正文：从清晨热饮到傍晚通勤，一杯陪到底。",
+                            }
+                        }
+                    ]
+                },
+            )
+
+        provider = ModelScopeTextProvider(
+            Settings(
+                modelscope_api_token="token",
+                modelscope_base_url="https://mocked.example.com/v1",
+                callback_base_url="http://127.0.0.1:3100",
+            ),
+            transport=httpx.MockTransport(handler),
+        )
+
+        result = await provider.chat(
+            [
+                {"role": "system", "content": "你是宣传文案助手。"},
+                {"role": "user", "content": "帮我宣传一款通勤杯。"},
+            ]
+        )
+
+        self.assertIn("通勤轻一点", result["content"])
+        self.assertEqual(result["model"], "Qwen/Qwen2.5-7B-Instruct")
+        self.assertEqual(result["provider"], "modelscope")
+
     async def test_generate_copy_parses_json_code_block_response(self):
         def handler(request: httpx.Request) -> httpx.Response:
             self.assertEqual(request.url.path, "/v1/chat/completions")

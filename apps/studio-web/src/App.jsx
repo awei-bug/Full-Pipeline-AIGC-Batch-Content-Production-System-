@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   apiBaseUrl,
@@ -6,36 +6,71 @@ import {
   createContentJob,
   createImportBatch,
   exportContentJob,
+  downloadListingPack,
+  previewListingPack,
+  pushListingPack,
   listContentJobs,
   listImportBatches,
   listContentOutputs,
   listProducts,
   parseCsvText,
   parseImportFile,
+  sendChatMessage,
+  startContentWorkflow,
+  getContentWorkflow,
 } from "./batch-api.js";
-import { deriveBatchWorkspaceView } from "./batch-view-model.js";
+import { deriveBatchWorkspaceView, shouldPollContentJob } from "./batch-view-model.js";
+import { EmptyCanvas, FlowNodes } from "./Illustrations.jsx";
+import { IPWorkspace } from "./IPWorkspace.jsx";
+import { getSystemTheme, setTheme as persistTheme } from "./theme.js";
 
 const defaultCsvText = [
-  "商品名称,卖点,价格,分类,目标人群,使用场景",
-  "防晒喷雾,清爽不黏腻，适合夏季通勤,89,个护美妆,都市白领,办公室补喷",
-  "修护面膜,夜间补水修护，适合熬夜后使用,129,护肤,25-35岁女性,居家夜间护理",
+  "产品名称,核心卖点,报价/MOQ,品类,目标市场,应用场景",
+  "不锈钢水杯,食品级材质，支持定制Logo,FOB $2.8 / MOQ 500,日用百货,美国/欧洲,礼品与商超渠道",
+  "工业连接器,高防护等级，支持批量OEM,FOB $1.2 / MOQ 1000,电子元器件,东南亚/中东,设备配套与工程采购",
 ].join("\n");
+
+const workflowStyleOptions = {
+  image: [
+    { id: "editorial", label: "杂志编辑感", prompt: "editorial fashion magazine, refined composition, art direction, premium typography space" },
+    { id: "product-studio", label: "产品棚拍", prompt: "clean studio product photography, soft directional light, crisp details, commercial catalog" },
+    { id: "lifestyle", label: "生活方式", prompt: "warm lifestyle scene, natural daylight, authentic human context, social media friendly" },
+    { id: "minimal", label: "极简留白", prompt: "minimalist art direction, calm palette, generous negative space, modern brand campaign" },
+  ],
+  video: [
+    { id: "short-drama", label: "剧情开场", prompt: "short-form narrative hook, fast opening beat, relatable scene, clear payoff" },
+    { id: "product-demo", label: "产品展示", prompt: "cinematic product demonstration, macro details, smooth camera movement, benefit-led" },
+    { id: "ugc", label: "真实种草", prompt: "authentic creator-style vertical video, handheld energy, natural reactions, social proof" },
+    { id: "brand-film", label: "品牌大片", prompt: "cinematic brand film, controlled lighting, elegant pacing, emotional visual language" },
+  ],
+};
+
+const initialWorkflowBrief =
+  "为一款极简白色保温杯做一套小红书新品发布内容，突出轻便、保温和通勤场景，整体要有高级感。";
+
+const workflowCopySystemPrompt = [
+  "你是资深商业宣传文案策划。",
+  "用户会用很直白的话描述产品、活动或修改要求。",
+  "每次只输出一份可直接发布、并能继续指导图片和视频生成的最终中文宣传文案，不解释创作过程。",
+  "文案应包含：主标题、宣传正文、3个核心卖点、行动号召、图片画面建议、短视频镜头脚本。",
+  "信息不足时可以基于常见营销场景合理补全，但不要虚构价格、认证、功效或用户没有提供的事实。",
+].join("");
 
 const contentTypeOptions = [
   {
     value: "marketing_copy",
-    title: "营销文案",
-    description: "商品标题、卖点摘要和成单文案",
+    title: "英文Listing",
+    description: "产品标题、卖点 bullet 和英文描述",
   },
   {
-    value: "video_script",
-    title: "视频脚本",
-    description: "短视频分段脚本和口播框架",
+    value: "image_asset",
+    title: "产品图片",
+    description: "根据文案生成产品主图或宣传图",
   },
   {
-    value: "image_prompt",
-    title: "海报提示词",
-    description: "供图片模型直接使用的构图提示词",
+    value: "video_asset",
+    title: "产品视频",
+    description: "根据文案生成产品宣传视频",
   },
 ];
 
@@ -55,6 +90,73 @@ function formatDateTime(value) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(date);
+}
+
+function getJobStatusLabel(status) {
+  switch (status) {
+    case "success":
+      return "已完成";
+    case "partial_success":
+      return "部分完成";
+    case "failed":
+      return "执行失败";
+    case "running":
+      return "生成中";
+    case "queued":
+    case "pending":
+    case "created":
+      return "等待执行";
+    default:
+      return "暂无任务";
+  }
+}
+
+function getWorkflowAssetUrl(output) {
+  const url = String(output?.metadata?.publicUrl || output?.metadata?.url || "").trim();
+  if (!url) return "";
+  if (/^https?:\/\//i.test(url)) return url;
+  return url.startsWith("/") ? `${apiBaseUrl}${url}` : `${apiBaseUrl}/${url}`;
+}
+
+function getWorkflowStageLabel(status) {
+  switch (status) {
+    case "success": return "已完成";
+    case "running": return "执行中";
+    case "failed": return "失败";
+    case "skipped": return "跳过";
+    default: return "待执行";
+  }
+}
+
+function WorkflowStage({ stage, index }) {
+  return (
+    <div className={`workflow-stage workflow-stage-${stage.status}`}>
+      <div className="workflow-stage-marker">{stage.status === "success" ? "✓" : index + 1}</div>
+      <div className="workflow-stage-copy">
+        <strong>{stage.label}</strong>
+        <span>{getWorkflowStageLabel(stage.status)}</span>
+      </div>
+      <div className="workflow-stage-progress"><i style={{ width: `${stage.progress || 0}%` }} /></div>
+    </div>
+  );
+}
+
+function WorkflowVariant({ variant, kind }) {
+  const output = variant.output;
+  const assetUrl = getWorkflowAssetUrl(output);
+  const isImage = kind === "image";
+  return (
+    <article className={`workflow-variant workflow-variant-${variant.status}`}>
+      <div className="workflow-variant-head">
+        <span className="variant-index">{String(variant.id || "").split("_").pop()?.padStart(2, "0")}</span>
+        <div><strong>{variant.style?.label || "风格分支"}</strong><span>{variant.status === "success" ? "生成完成" : variant.errorMessage || "等待生成"}</span></div>
+      </div>
+      {assetUrl && isImage ? <img src={assetUrl} alt={variant.style?.label || "生成图片"} /> : null}
+      {assetUrl && !isImage ? <video src={assetUrl} controls preload="metadata" aria-label={variant.style?.label || "生成视频"} /> : null}
+      {!assetUrl && variant.status === "running" ? <div className="workflow-asset-placeholder">正在生成素材…</div> : null}
+      {!assetUrl && variant.status === "failed" ? <div className="workflow-asset-placeholder is-error">{variant.errorMessage || "该分支生成失败"}</div> : null}
+    </article>
+  );
 }
 
 function ResultFilterTabs({ filters, activeKey, onChange }) {
@@ -90,6 +192,20 @@ function StatusToast({ kind, message, onClose }) {
   );
 }
 
+function GuideEmpty({ title, message, actionLabel, onAction }) {
+  return (
+    <div className="guide-empty">
+      <strong>{title}</strong>
+      <p>{message}</p>
+      {actionLabel && onAction ? (
+        <button type="button" className="primary-button" onClick={onAction}>
+          {actionLabel}
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 export function App() {
   const [batches, setBatches] = useState([]);
   const [products, setProducts] = useState([]);
@@ -98,20 +214,53 @@ export function App() {
   const [selectedBatchId, setSelectedBatchId] = useState("");
   const [selectedResultType, setSelectedResultType] = useState("all");
   const [expandedResultIds, setExpandedResultIds] = useState([]);
+  const [workspaceMode, setWorkspaceMode] = useState("ip");
+  const [theme, setThemeState] = useState(() => document.documentElement.dataset.theme || getSystemTheme());
+  const [workflowCopyInput, setWorkflowCopyInput] = useState(initialWorkflowBrief);
+  const [workflowCopyMessages, setWorkflowCopyMessages] = useState([
+    {
+      id: "welcome",
+      role: "assistant",
+      content:
+        "直接告诉我你要宣传什么、给谁看、想突出什么。哪怕只说“帮我卖这个杯子”，我也会先整理成完整宣传文案，你还可以继续让我改。",
+    },
+  ]);
+  const [workflowBrief, setWorkflowBrief] = useState(initialWorkflowBrief);
+  const [workflowCopyDraft, setWorkflowCopyDraft] = useState("");
+  const [workflowCopyModel, setWorkflowCopyModel] = useState("");
+  const [isGeneratingWorkflowCopy, setIsGeneratingWorkflowCopy] = useState(false);
+  const [workflowOutputMode, setWorkflowOutputMode] = useState("both");
+  const [workflowImageStyleIds, setWorkflowImageStyleIds] = useState(["editorial", "product-studio", "lifestyle"]);
+  const [workflowVideoStyleIds, setWorkflowVideoStyleIds] = useState(["product-demo", "ugc"]);
+  const [workflowRun, setWorkflowRun] = useState(null);
+  const [isStartingWorkflow, setIsStartingWorkflow] = useState(false);
   const [csvText, setCsvText] = useState(defaultCsvText);
-  const [fileName, setFileName] = useState("products.csv");
+  const [fileName, setFileName] = useState("export-products.csv");
   const [selectedFileName, setSelectedFileName] = useState("");
   const [selectedContentTypes, setSelectedContentTypes] = useState([
     "marketing_copy",
-    "video_script",
-    "image_prompt",
+    "image_asset",
+    "video_asset",
   ]);
   const [isBootstrapping, setIsBootstrapping] = useState(true);
   const [isImporting, setIsImporting] = useState(false);
   const [isCreatingJob, setIsCreatingJob] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+  const [isPacking, setIsPacking] = useState(false);
+  const [packPanelOpen, setPackPanelOpen] = useState(false);
+  const [packPreview, setPackPreview] = useState(null);
+  const [packPrices, setPackPrices] = useState({});
+  const [packPublish, setPackPublish] = useState(false);
+  const [commercePush, setCommercePush] = useState({ configured: false, tenantSlug: "" });
+  const [pushResult, setPushResult] = useState(null);
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
+  const workspaceRequestIdRef = useRef(0);
+  const selectedBatchIdRef = useRef(selectedBatchId);
+
+  useEffect(() => {
+    selectedBatchIdRef.current = selectedBatchId;
+  }, [selectedBatchId]);
 
   const view = useMemo(
     () =>
@@ -128,20 +277,32 @@ export function App() {
     [batches, products, jobs, outputs, selectedBatchId, selectedResultType, expandedResultIds],
   );
 
-  async function loadWorkspace(preferredBatchId = "") {
+  async function loadWorkspace(preferredBatchId = "", options = {}) {
+    const resetResultView = options.resetResultView ?? true;
+    const requestId = workspaceRequestIdRef.current + 1;
+    workspaceRequestIdRef.current = requestId;
+
     const [nextBatches, nextJobs] = await Promise.all([listImportBatches(), listContentJobs()]);
-    const resolvedBatchId = preferredBatchId || selectedBatchId || nextBatches[0]?.id || "";
+    const resolvedBatchId =
+      preferredBatchId || selectedBatchIdRef.current || nextBatches[0]?.id || "";
     const nextProducts = resolvedBatchId ? await listProducts(resolvedBatchId) : [];
     const activeJobs = nextJobs.filter((item) => item.batchId === resolvedBatchId);
     const nextOutputs = activeJobs[0]?.id ? await listContentOutputs(activeJobs[0].id) : [];
+
+    if (requestId !== workspaceRequestIdRef.current) {
+      return resolvedBatchId;
+    }
 
     setBatches(nextBatches);
     setJobs(nextJobs);
     setSelectedBatchId(resolvedBatchId);
     setProducts(nextProducts);
     setOutputs(nextOutputs);
-    setExpandedResultIds([]);
-    setSelectedResultType("all");
+    if (resetResultView) {
+      setExpandedResultIds([]);
+      setSelectedResultType("all");
+    }
+    return resolvedBatchId;
   }
 
   useEffect(() => {
@@ -151,6 +312,7 @@ export function App() {
       try {
         setIsBootstrapping(true);
         setErrorMessage("");
+        loadCommercePushState();
         await loadWorkspace();
       } catch (error) {
         if (active) {
@@ -167,24 +329,48 @@ export function App() {
 
     return () => {
       active = false;
+      workspaceRequestIdRef.current += 1;
     };
   }, []);
+
+  useEffect(() => {
+    if (!workflowRun?.id || ["success", "partial_success", "failed"].includes(workflowRun.status)) {
+      return undefined;
+    }
+
+    let active = true;
+    const timer = window.setInterval(async () => {
+      try {
+        const nextRun = await getContentWorkflow(workflowRun.id);
+        if (active) setWorkflowRun(nextRun);
+      } catch (error) {
+        if (active) setErrorMessage(error.message);
+      }
+    }, 2000);
+
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [workflowRun?.id, workflowRun?.status]);
 
   useEffect(() => {
     if (!selectedBatchId) {
       setProducts([]);
       setOutputs([]);
-      return;
+      return undefined;
     }
 
     let active = true;
+    const requestId = workspaceRequestIdRef.current + 1;
+    workspaceRequestIdRef.current = requestId;
 
     async function loadBatchDetails() {
       try {
         const nextProducts = await listProducts(selectedBatchId);
         const activeJobs = jobs.filter((item) => item.batchId === selectedBatchId);
         const nextOutputs = activeJobs[0]?.id ? await listContentOutputs(activeJobs[0].id) : [];
-        if (active) {
+        if (active && requestId === workspaceRequestIdRef.current) {
           setProducts(nextProducts);
           setOutputs(nextOutputs);
         }
@@ -202,6 +388,28 @@ export function App() {
     };
   }, [jobs, selectedBatchId]);
 
+  useEffect(() => {
+    if (!selectedBatchId || !shouldPollContentJob(view.latestJob)) {
+      return undefined;
+    }
+
+    let active = true;
+    const timer = window.setInterval(async () => {
+      try {
+        await loadWorkspace(selectedBatchId, { resetResultView: false });
+      } catch (error) {
+        if (active) {
+          setErrorMessage(error.message);
+        }
+      }
+    }, 2000);
+
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [selectedBatchId, view.latestJob?.id, view.latestJob?.status]);
+
   async function handleImport(event) {
     event.preventDefault();
 
@@ -213,13 +421,13 @@ export function App() {
       const parsed = parseCsvText(csvText);
       const fieldMapping = buildFieldMapping(parsed.headers);
       const result = await createImportBatch({
-        fileName: fileName.trim() || "products.csv",
+        fileName: fileName.trim() || "export-products.csv",
         rows: parsed.rows,
         fieldMapping,
       });
 
       await loadWorkspace(result.batchId);
-      setSuccessMessage(`已导入 ${result.productCount} 条商品数据。`);
+      setSuccessMessage(`已导入 ${result.productCount} 条产品数据。`);
     } catch (error) {
       setErrorMessage(error.message);
     } finally {
@@ -245,7 +453,7 @@ export function App() {
       setFileName(parsed.fileName);
       setSelectedFileName(parsed.fileName);
       setCsvText(nextCsvText);
-      setSuccessMessage(`已读取文件 ${parsed.fileName}，共 ${parsed.rows.length} 条商品。`);
+      setSuccessMessage(`已读取文件 ${parsed.fileName}，共 ${parsed.rows.length} 条产品。`);
     } catch (error) {
       setErrorMessage(error.message);
     } finally {
@@ -255,7 +463,7 @@ export function App() {
 
   async function handleCreateJob() {
     if (!view.activeBatch?.id) {
-      setErrorMessage("请先导入一个商品批次。");
+      setErrorMessage("请先导入一个产品批次。");
       return;
     }
 
@@ -275,7 +483,11 @@ export function App() {
       });
 
       await loadWorkspace(view.activeBatch.id);
-      setSuccessMessage(`批量任务已创建，共 ${result.itemCount} 个商品子任务。`);
+      const dispatchHint =
+        result.dispatchErrorCount > 0
+          ? `，其中 ${result.dispatchErrorCount} 个子任务派发失败`
+          : "";
+      setSuccessMessage(`外贸内容任务已创建，共 ${result.itemCount} 个产品子任务${dispatchHint}。`);
     } catch (error) {
       setErrorMessage(error.message);
     } finally {
@@ -296,7 +508,7 @@ export function App() {
       const url = URL.createObjectURL(result.blob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = result.fileName || "批量内容结果.xlsx";
+      link.download = result.fileName || "外贸内容结果.xlsx";
       link.click();
       URL.revokeObjectURL(url);
       setSuccessMessage("结果已导出为 Excel 文件。");
@@ -307,6 +519,120 @@ export function App() {
     }
   }
 
+  async function loadCommercePushState() {
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/health`);
+      const payload = await response.json();
+      setCommercePush({
+        configured: Boolean(payload?.data?.commercePushConfigured),
+        tenantSlug: payload?.data?.commercePushTenant || "",
+      });
+    } catch {
+      setCommercePush({ configured: false, tenantSlug: "" });
+    }
+  }
+
+  async function handleOpenPackPanel() {
+    if (!view.latestJob?.id) {
+      setErrorMessage("当前没有可打包的任务结果。");
+      return;
+    }
+
+    try {
+      setIsPacking(true);
+      setErrorMessage("");
+      const preview = await previewListingPack(view.latestJob.id);
+      const initialPrices = {};
+      for (const item of preview.data?.pending || []) {
+        initialPrices[item.productId] = item.suggestedPrice ? String(item.suggestedPrice) : "";
+      }
+      setPackPrices(initialPrices);
+      setPackPublish(Boolean(preview.data?.summary?.publish));
+      setPackPreview(preview.data || null);
+      setPackPanelOpen(true);
+    } catch (error) {
+      setErrorMessage(error.message);
+    } finally {
+      setIsPacking(false);
+    }
+  }
+
+  async function handleDownloadPack() {
+    if (!view.latestJob?.id) {
+      return;
+    }
+
+    const prices = {};
+    for (const [productId, value] of Object.entries(packPrices)) {
+      const parsed = Number.parseFloat(String(value).replace(/[^\d.]/g, ""));
+      if (Number.isFinite(parsed) && parsed > 0) {
+        prices[productId] = parsed;
+      }
+    }
+
+    try {
+      setIsPacking(true);
+      const result = await downloadListingPack(view.latestJob.id, {
+        prices,
+        publish: packPublish,
+      });
+      const url = URL.createObjectURL(result.blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = result.fileName || "listing-pack.zip";
+      link.click();
+      URL.revokeObjectURL(url);
+      setPackPanelOpen(false);
+      const stillPending = (packPreview?.pending || []).filter(
+        (item) => !prices[item.productId],
+      ).length;
+      setSuccessMessage(
+        stillPending > 0
+          ? `成品包已生成，仍有 ${stillPending} 件未填价格，导入商城时会被跳过。`
+          : "成品包已生成，可上传到商家后台的成品包导入。",
+      );
+    } catch (error) {
+      setErrorMessage(error.message);
+    } finally {
+      setIsPacking(false);
+    }
+  }
+
+  function collectPackPrices() {
+    const prices = {};
+    for (const [productId, value] of Object.entries(packPrices)) {
+      const parsed = Number.parseFloat(String(value).replace(/[^\d.]/g, ""));
+      if (Number.isFinite(parsed) && parsed > 0) {
+        prices[productId] = parsed;
+      }
+    }
+    return prices;
+  }
+
+  async function handlePushToCommerce() {
+    if (!view.latestJob?.id) {
+      return;
+    }
+
+    try {
+      setIsPacking(true);
+      setErrorMessage("");
+      setPushResult(null);
+      const result = await pushListingPack(view.latestJob.id, {
+        prices: collectPackPrices(),
+        publish: packPublish,
+      });
+      setPushResult(result);
+      setSuccessMessage(
+        `已推送到商城：成功 ${result.createdCount} 件，失败 ${result.errorCount} 件。`,
+      );
+    } catch (error) {
+      setErrorMessage(error.message);
+    } finally {
+      setIsPacking(false);
+    }
+  }
+
   async function handleCopyResult(card) {
     try {
       await navigator.clipboard.writeText(card.copyText || "");
@@ -314,6 +640,131 @@ export function App() {
     } catch {
       setErrorMessage("复制失败，请检查浏览器权限。");
     }
+  }
+
+  function toggleWorkflowStyle(kind, styleId) {
+    const setter = kind === "image" ? setWorkflowImageStyleIds : setWorkflowVideoStyleIds;
+    setter((current) => (
+      current.includes(styleId)
+        ? current.filter((item) => item !== styleId)
+        : [...current, styleId]
+    ));
+  }
+
+  async function handleStartWorkflow(event) {
+    event?.preventDefault();
+    const brief = workflowBrief.trim();
+    const approvedCopy = workflowCopyDraft.trim();
+    if (!approvedCopy) {
+      setErrorMessage("请先在左侧生成或填写宣传文案，再生成图片或视频。");
+      return;
+    }
+    const imageStyles = workflowOutputMode === "video"
+      ? []
+      : workflowStyleOptions.image.filter((style) => workflowImageStyleIds.includes(style.id));
+    const videoStyles = workflowOutputMode === "image"
+      ? []
+      : workflowStyleOptions.video.filter((style) => workflowVideoStyleIds.includes(style.id));
+    if (imageStyles.length === 0 && videoStyles.length === 0) {
+      setErrorMessage(`请至少选择一种${workflowOutputMode === "video" ? "视频" : "图片"}风格。`);
+      return;
+    }
+
+    try {
+      setIsStartingWorkflow(true);
+      setErrorMessage("");
+      setSuccessMessage("");
+      const run = await startContentWorkflow({
+        brief: brief || approvedCopy,
+        approvedCopy,
+        copyModel: workflowCopyModel,
+        imageStyles,
+        videoStyles,
+      });
+      setWorkflowRun(run);
+      setSuccessMessage("已采用确认后的宣传文案，开始生成图片和视频。");
+    } catch (error) {
+      setErrorMessage(error.message);
+    } finally {
+      setIsStartingWorkflow(false);
+    }
+  }
+
+  async function handleGenerateWorkflowCopy(event) {
+    event?.preventDefault();
+    const content = workflowCopyInput.trim();
+    if (!content || isGeneratingWorkflowCopy) {
+      return;
+    }
+
+    const nextUserMessage = {
+      id: `user-${Date.now()}`,
+      role: "user",
+      content,
+    };
+    const requestMessages = [
+      { role: "system", content: workflowCopySystemPrompt },
+      ...workflowCopyMessages
+        .filter((message) => message.id !== "welcome")
+        .map(({ role, content: messageContent }) => ({
+        role,
+        content: messageContent,
+        })),
+      { role: "user", content },
+    ];
+
+    if (!workflowCopyDraft.trim()) {
+      setWorkflowBrief(content);
+    }
+    setWorkflowCopyMessages((current) => [...current, nextUserMessage]);
+    setWorkflowCopyInput("");
+    setIsGeneratingWorkflowCopy(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+
+    try {
+      const result = await sendChatMessage(requestMessages);
+      const generatedCopy = result.content || "";
+      setWorkflowCopyMessages((current) => [
+        ...current,
+        {
+          id: `assistant-${Date.now()}`,
+          role: "assistant",
+          content: generatedCopy || "暂时没有生成内容，请换个说法再试一次。",
+          model: result.model,
+        },
+      ]);
+      if (generatedCopy) {
+        setWorkflowCopyDraft(generatedCopy);
+        setWorkflowCopyModel(result.model || "");
+        setSuccessMessage("宣传文案已生成。你可以直接修改，或继续对话让 AI 调整。");
+      }
+    } catch (error) {
+      setErrorMessage(error.message);
+    } finally {
+      setIsGeneratingWorkflowCopy(false);
+    }
+  }
+
+  function handleWorkflowCopySuggestion(suggestion) {
+    setWorkflowCopyInput(suggestion);
+  }
+
+  function toggleTheme() {
+    const next = theme === "dark" ? "light" : "dark";
+    persistTheme(next);
+    setThemeState(next);
+  }
+
+  function handleResetWorkflowCopy() {
+    setWorkflowCopyMessages((current) => current.filter((message) => message.id === "welcome"));
+    setWorkflowCopyInput("");
+    setWorkflowBrief("");
+    setWorkflowCopyDraft("");
+    setWorkflowCopyModel("");
+    setWorkflowRun(null);
+    setErrorMessage("");
+    setSuccessMessage("已清空，可以重新描述宣传需求。");
   }
 
   function handleToggleContentType(value) {
@@ -328,317 +779,361 @@ export function App() {
     );
   }
 
+  const latestProgress = Number(view.latestJob?.progress || 0);
+  const latestStatusLabel = getJobStatusLabel(view.latestJob?.status);
+  const hasBatch = Boolean(view.activeBatch);
+  const hasJob = Boolean(view.latestJob);
+  function renderChatStep() {
+    const runStages = workflowRun?.stages || [
+      {
+        id: "copy",
+        label: workflowCopyDraft.trim() ? "宣传文案已确认" : "生成并确认宣传文案",
+        status: workflowCopyDraft.trim() ? "success" : "current",
+        progress: workflowCopyDraft.trim() ? 100 : 0,
+      },
+      {
+        id: "images",
+        label: `生成图片 · ${workflowImageStyleIds.length} 种风格`,
+        status: workflowOutputMode === "video" ? "skipped" : "pending",
+        progress: 0,
+      },
+      {
+        id: "videos",
+        label: `生成视频 · ${workflowVideoStyleIds.length} 种风格`,
+        status: workflowOutputMode === "image" ? "skipped" : "pending",
+        progress: 0,
+      },
+      { id: "complete", label: "汇总可发布内容", status: "pending", progress: 0 },
+    ];
+    const isRunning = workflowRun && ["queued", "running"].includes(workflowRun.status);
+    const imageVariants = workflowRun?.imageVariants || [];
+    const videoVariants = workflowRun?.videoVariants || [];
+
+    return (
+      <div className="workflow-page">
+        <section className="workflow-intro">
+          <div>
+            <span className="hero-kicker">CONTENT WORKFLOW · AGNES</span>
+            <h2>先把直白需求变成宣传文案，再生成对应图片或视频</h2>
+            <p>先用日常语言说明你想宣传什么。文案可以反复调整和手动编辑，确认后再交给图片与视频模型，整条链路使用同一份内容依据。</p>
+          </div>
+          <div className="workflow-model-stack">
+            <span><b>1</b> 直白描述 <strong>对话生成文案</strong></span>
+            <span><b>2</b> 确认文案 <strong>支持人工修改</strong></span>
+            <span><b>3</b> 生成素材 <strong>图片 / 视频</strong></span>
+          </div>
+          <FlowNodes className="illus illus-hero workflow-intro-illus" />
+        </section>
+
+        <div className="workflow-grid">
+          <section className="workflow-authoring panel">
+            <div className="workflow-section-head">
+              <div><span className="panel-kicker">第一步</span><h2>和 AI 把宣传文案聊清楚</h2></div>
+              <button className="workflow-reset-button" type="button" onClick={handleResetWorkflowCopy}>重新开始</button>
+            </div>
+
+            <div className="workflow-copy-chat" aria-live="polite">
+              {workflowCopyMessages.map((message) => (
+                <div key={message.id} className={`workflow-copy-message is-${message.role}`}>
+                  <span>{message.role === "assistant" ? "AI 文案助手" : "我的要求"}</span>
+                  <p>{message.content}</p>
+                </div>
+              ))}
+              {isGeneratingWorkflowCopy ? (
+                <div className="workflow-copy-message is-assistant is-loading">
+                  <span>AI 文案助手</span>
+                  <p>正在整理宣传文案…</p>
+                </div>
+              ) : null}
+            </div>
+
+            <form className="workflow-copy-composer" onSubmit={handleGenerateWorkflowCopy}>
+              <textarea
+                className="workflow-brief-input"
+                value={workflowCopyInput}
+                onChange={(event) => setWorkflowCopyInput(event.target.value)}
+                rows={3}
+                placeholder={workflowCopyDraft ? "继续说修改要求，例如：再简短一点，语气更有购买欲…" : "直接描述，例如：帮我宣传这款杯子，主要给上班族用，要显得高级…"}
+                aria-label="宣传文案对话输入"
+              />
+              <div className="workflow-copy-composer-actions">
+                <span>{workflowCopyInput.length} 字</span>
+                <button className="primary-button workflow-copy-submit" type="submit" disabled={!workflowCopyInput.trim() || isGeneratingWorkflowCopy}>
+                  {isGeneratingWorkflowCopy ? "正在生成…" : workflowCopyDraft ? "按要求修改文案" : "生成宣传文案"}
+                </button>
+              </div>
+            </form>
+
+            <div className="workflow-copy-suggestions" aria-label="常用修改要求">
+              {["压缩得更简洁", "语气更有购买欲", "改成小红书风格"].map((suggestion) => (
+                <button key={suggestion} type="button" onClick={() => handleWorkflowCopySuggestion(suggestion)}>{suggestion}</button>
+              ))}
+            </div>
+
+            <div className="workflow-copy-editor">
+              <div className="workflow-copy-editor-head">
+                <div><strong>最终采用的宣传文案</strong><span>生成素材时会完整使用这里的内容</span></div>
+                <span>{workflowCopyDraft.length} 字</span>
+              </div>
+              <textarea
+                value={workflowCopyDraft}
+                onChange={(event) => setWorkflowCopyDraft(event.target.value)}
+                rows={11}
+                placeholder="AI 生成的宣传文案会出现在这里，你也可以直接粘贴或手动填写文案。"
+                aria-label="最终采用的宣传文案"
+              />
+            </div>
+          </section>
+
+          <aside className="workflow-production panel">
+            <div className="workflow-section-head">
+              <div><span className="panel-kicker">第二步</span><h2>用确认文案生成素材</h2></div>
+              <span className="workflow-badge">{isRunning ? "正在生成" : workflowCopyDraft.trim() ? "文案已就绪" : "等待文案"}</span>
+            </div>
+
+            <form onSubmit={handleStartWorkflow}>
+              <div className="workflow-output-mode" role="group" aria-label="选择生成类型">
+                {[
+                  { id: "image", label: "只生成图片" },
+                  { id: "video", label: "只生成视频" },
+                  { id: "both", label: "图片和视频" },
+                ].map((mode) => (
+                  <button
+                    key={mode.id}
+                    type="button"
+                    className={workflowOutputMode === mode.id ? "is-selected" : ""}
+                    onClick={() => setWorkflowOutputMode(mode.id)}
+                  >
+                    {mode.label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="workflow-options">
+                {workflowOutputMode !== "video" ? (
+                <div className="workflow-option-group">
+                  <div className="workflow-option-title"><strong>图片分支</strong><span>{workflowImageStyleIds.length} 张</span></div>
+                  <div className="workflow-style-list">
+                    {workflowStyleOptions.image.map((style) => (
+                      <button key={style.id} type="button" className={`workflow-style-chip ${workflowImageStyleIds.includes(style.id) ? "is-selected" : ""}`} onClick={() => toggleWorkflowStyle("image", style.id)}>
+                        <i />{style.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                ) : null}
+                {workflowOutputMode !== "image" ? (
+                <div className="workflow-option-group">
+                  <div className="workflow-option-title"><strong>视频分支</strong><span>{workflowVideoStyleIds.length} 条</span></div>
+                  <div className="workflow-style-list">
+                    {workflowStyleOptions.video.map((style) => (
+                      <button key={style.id} type="button" className={`workflow-style-chip ${workflowVideoStyleIds.includes(style.id) ? "is-selected" : ""}`} onClick={() => toggleWorkflowStyle("video", style.id)}>
+                        <i />{style.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                ) : null}
+              </div>
+
+              <button className="primary-button workflow-run-button" type="submit" disabled={!workflowCopyDraft.trim() || isStartingWorkflow || isRunning}>
+                <span>{isStartingWorkflow ? "正在启动…" : isRunning ? "素材生成中…" : !workflowCopyDraft.trim() ? "请先生成宣传文案" : workflowOutputMode === "image" ? "根据文案生成图片" : workflowOutputMode === "video" ? "根据文案生成视频" : "根据文案生成图片和视频"}</span><b>→</b>
+              </button>
+            </form>
+
+            <div className="workflow-progress-head">
+              <div><strong>执行进度</strong><span>当前素材统一依据左侧确认文案生成</span></div>
+              <strong className="workflow-progress-number">{workflowRun?.progress || 0}%</strong>
+            </div>
+            <div className="workflow-track">
+              {runStages.map((stage, index) => <WorkflowStage key={stage.id} stage={stage} index={index} />)}
+            </div>
+            <div className="workflow-run-note">
+              <span className={isRunning ? "workflow-pulse" : "workflow-idle"} />
+              {workflowRun?.status === "partial_success" ? "部分分支完成，可先使用已生成素材。" : workflowRun?.status === "success" ? "图片和视频已按确认文案生成完成。" : isRunning ? `正在执行：${workflowRun.currentStage === "images" ? "图片风格分支" : workflowRun.currentStage === "videos" ? "视频风格分支" : "确认宣传文案"}` : workflowCopyDraft.trim() ? "文案已就绪，选择类型和风格后即可生成。" : "先在左侧完成宣传文案。"}
+            </div>
+          </aside>
+        </div>
+
+        {workflowRun ? (
+          <section className="workflow-results">
+            <div className="workflow-results-head"><div><span className="panel-kicker">工作流产出</span><h2>{workflowRun.status === "success" ? "可发布内容已就绪" : "正在收集每个分支的结果"}</h2></div><span>{imageVariants.length + videoVariants.length} 个视觉分支</span></div>
+            {workflowRun.copy?.content ? <article className="workflow-copy-result"><div className="workflow-copy-label"><span>本次采用的宣传文案</span><small>{workflowRun.copy.model || "已确认文案"}</small></div><p>{workflowRun.copy.content}</p></article> : null}
+            {imageVariants.length > 0 ? <div className="workflow-result-group"><div className="workflow-result-group-head"><strong>图片分支</strong><span>{imageVariants.length} 种风格</span></div><div className="workflow-variant-grid">{imageVariants.map((variant) => <WorkflowVariant key={variant.id} variant={variant} kind="image" />)}</div></div> : null}
+            {videoVariants.length > 0 ? <div className="workflow-result-group"><div className="workflow-result-group-head"><strong>视频分支</strong><span>{videoVariants.length} 种风格</span></div><div className="workflow-variant-grid">{videoVariants.map((variant) => <WorkflowVariant key={variant.id} variant={variant} kind="video" />)}</div></div> : null}
+          </section>
+        ) : (
+          <section className="workflow-empty"><EmptyCanvas className="illus illus-empty" /><div><strong>生成结果会集中显示在这里</strong><p>先通过对话得到宣传文案，确认后选择图片或视频，系统会严格沿用这份文案生成素材。</p></div></section>
+        )}
+      </div>
+    );
+  }
+
   return (
-    <main className="workspace-page">
+    <div className="app-shell">
       <StatusToast kind="error" message={errorMessage} onClose={() => setErrorMessage("")} />
       <StatusToast kind="success" message={successMessage} onClose={() => setSuccessMessage("")} />
 
-      <header className="workspace-header">
-        <div className="workspace-title-block">
-          <span className="workspace-eyebrow">全链路 AIGC 批量内容生产系统</span>
-          <h1>导入商品表，一次生成批量营销内容</h1>
-          <p>
-            面向商家与自媒体团队的批量工作台。上传商品数据后，系统会集中生成营销文案、视频脚本、海报提示词和效果图片。
-          </p>
-        </div>
-
-        <div className="overview-strip">
-          {view.overviewCards.map((card) => (
-            <div key={card.label} className="overview-card">
-              <span>{card.label}</span>
-              <strong>{card.value}</strong>
-              <p>{card.detail}</p>
-            </div>
-          ))}
-        </div>
-      </header>
-
-      <section className="step-strip" aria-label="操作步骤">
-        {view.steps.map((step, index) => (
-          <div key={step.key} className={`step-card step-${step.status}`}>
-            <div className="step-index">{index + 1}</div>
-            <div className="step-copy">
-              <strong>{step.title}</strong>
-              <span>{step.statusLabel}</span>
+      <div className="main-panel">
+        <header className="topbar">
+          <div className="topbar-identity">
+            <div className="brand-mark" aria-hidden="true" />
+            <div className="topbar-title">
+              <p className="eyebrow">多Agent数字IP内容生成平台</p>
+              <h1>{workspaceMode === "ip" ? "数字 IP 创作" : "内容工作流"}</h1>
             </div>
           </div>
-        ))}
-      </section>
 
-      <section className="workspace-shell">
-        <section className="workspace-column left-column">
-          <article className="panel panel-import">
-            <div className="panel-top">
-              <div>
-                <span className="panel-kicker">步骤一</span>
-                <h2>导入商品数据</h2>
-              </div>
-              <span className="panel-note">支持 CSV / XLSX / XLS</span>
-            </div>
+          <div className="workspace-switch" aria-label="工作区切换">
+            <button type="button" className={workspaceMode === "ip" ? "is-active" : ""} onClick={() => setWorkspaceMode("ip")}>数字 IP 创作</button>
+            <button type="button" className={workspaceMode === "content" ? "is-active" : ""} onClick={() => setWorkspaceMode("content")}>内容工作流</button>
+          </div>
 
-            <div className="action-cluster">
-              <label className="upload-button">
-                <input type="file" accept=".csv,.xlsx,.xls" onChange={handleSelectImportFile} />
-                <span>上传文件</span>
-              </label>
-              <span className="action-hint">
-                {selectedFileName ? `已选择 ${selectedFileName}` : "也可以直接粘贴 CSV 内容"}
-              </span>
-            </div>
-
-            <form className="import-form" onSubmit={handleImport}>
-              <label className="field-block">
-                <span>批次文件名</span>
-                <input
-                  value={fileName}
-                  onChange={(event) => setFileName(event.target.value)}
-                  placeholder="例如：夏季防晒商品.csv"
-                />
-              </label>
-
-              <label className="field-block">
-                <span>商品数据</span>
-                <textarea
-                  value={csvText}
-                  onChange={(event) => setCsvText(event.target.value)}
-                  rows={11}
-                  placeholder="第一行为表头，使用英文逗号分隔字段。"
-                />
-              </label>
-
-              <button
-                className="primary-button"
-                type="submit"
-                disabled={isImporting || isBootstrapping}
-              >
-                {isImporting ? "正在导入" : "创建导入批次"}
-              </button>
-            </form>
-          </article>
-
-          <article className="panel">
-            <div className="panel-top">
-              <div>
-                <span className="panel-kicker">当前批次商品</span>
-                <h2>商品清单</h2>
-              </div>
-              <span className="panel-note">{view.activeProductCount} 条</span>
-            </div>
-
-            {view.productTable.rows.length > 0 ? (
-              <div className="table-shell">
-                <div className="table-header-row">
-                  {view.productTable.columns.map((column) => (
-                    <span key={column}>{column}</span>
-                  ))}
-                </div>
-                <div className="table-body">
-                  {view.productTable.rows.map((row) => (
-                    <div key={row.id} className="table-data-row">
-                      {row.cells.map((cell, index) => (
-                        <span key={`${row.id}-${index}`}>{cell}</span>
-                      ))}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : (
-              <div className="empty-state">
-                <strong>暂无商品数据</strong>
-                <p>{view.productTable.emptyMessage}</p>
-              </div>
-            )}
-          </article>
-        </section>
-
-        <section className="workspace-column center-column">
-          <article className="panel">
-            <div className="panel-top">
-              <div>
-                <span className="panel-kicker">步骤二</span>
-                <h2>创建批量任务</h2>
-              </div>
-              <span className="panel-note">
-                {view.activeBatch ? view.activeBatch.subtitle : "等待导入批次"}
-              </span>
-            </div>
-
-            <div className="batch-selector-list">
-              {view.batchOptions.length > 0 ? (
-                view.batchOptions.map((batch) => (
-                  <button
-                    key={batch.id}
-                    type="button"
-                    className={`batch-option ${batch.selected ? "is-active" : ""}`}
-                    onClick={() => setSelectedBatchId(batch.id)}
-                  >
-                    <strong>{batch.title}</strong>
-                    <span>{batch.subtitle}</span>
-                    <span>{formatDateTime(batch.createdAt)}</span>
-                  </button>
-                ))
-              ) : (
-                <div className="empty-state compact">
-                  <strong>暂无导入批次</strong>
-                  <p>{view.emptyMessage}</p>
-                </div>
-              )}
-            </div>
-
-            <div className="type-grid">
-              {contentTypeOptions.map((option) => {
-                const active = selectedContentTypes.includes(option.value);
-                return (
-                  <button
-                    key={option.value}
-                    type="button"
-                    className={`type-card ${active ? "is-active" : ""}`}
-                    onClick={() => handleToggleContentType(option.value)}
-                  >
-                    <strong>{option.title}</strong>
-                    <span>{option.description}</span>
-                  </button>
-                );
-              })}
-            </div>
-
+          <div className="topbar-status" aria-label="当前状态">
+            {workspaceMode === "ip" ? <span className="model-pill">工作流 <strong>4 个 Agent</strong></span> : <span className="model-pill">文本模型 <strong>agnes-2.5-flash</strong></span>}
+            {workspaceMode !== "ip" && <span className="system-status topbar-live">● 服务在线</span>}
             <button
-              className="primary-button"
               type="button"
-              disabled={isCreatingJob || !view.activeBatch}
-              onClick={handleCreateJob}
+              className="theme-toggle"
+              onClick={toggleTheme}
+              aria-label={theme === "dark" ? "切换到浅色模式" : "切换到深色模式"}
+              title={theme === "dark" ? "切换到浅色模式" : "切换到深色模式"}
             >
-              {isCreatingJob ? "正在创建任务" : "发起批量内容任务"}
+              {theme === "dark" ? "☀" : "☾"}
             </button>
-          </article>
+          </div>
+        </header>
 
-          <article className="panel">
-            <div className="panel-top">
-              <div>
-                <span className="panel-kicker">任务概览</span>
-                <h2>任务清单</h2>
+        {packPanelOpen && packPreview ? (
+          <div className="pack-overlay" role="dialog" aria-modal="true">
+            <div className="pack-panel">
+              <div className="pack-panel-head">
+                <div>
+                  <h3>导出成品包</h3>
+                  <p>
+                    商品 {packPreview.summary.productCount} 件，图片 {packPreview.summary.imageCount} 张，
+                    待补价 {packPreview.summary.pendingPriceCount} 件
+                  </p>
+                </div>
+                <button
+                  className="pack-close"
+                  type="button"
+                  onClick={() => setPackPanelOpen(false)}
+                >
+                  关闭
+                </button>
               </div>
-              <span className="panel-note">{view.activeJobCount} 个</span>
-            </div>
 
-            {view.jobTable.rows.length > 0 ? (
-              <div className="job-list">
-                {view.jobTable.rows.map((row) => (
-                  <div key={row.id} className="job-card">
-                    <div className="job-card-header">
-                      <div>
-                        <strong>{row.jobNo}</strong>
-                        <p>{row.contentTypeText}</p>
-                      </div>
-                      <span className={`job-status tone-${row.statusTone}`}>{row.statusLabel}</span>
-                    </div>
-                    <div className="progress-line">
-                      <div className="progress-track">
-                        <div className="progress-fill" style={{ width: row.progressText }} />
-                      </div>
-                      <span>{row.progressText}</span>
-                    </div>
+              {(packPreview.pending || []).length > 0 ? (
+                <div className="pack-price-list">
+                  <div className="pack-price-head">
+                    <span>商品</span>
+                    <span>零售价</span>
                   </div>
-                ))}
-              </div>
-            ) : (
-              <div className="empty-state">
-                <strong>暂无批量任务</strong>
-                <p>{view.jobTable.emptyMessage}</p>
-              </div>
-            )}
-          </article>
-        </section>
-
-        <section className="workspace-column right-column">
-          <article className="panel panel-results">
-            <div className="panel-top">
-              <div>
-                <span className="panel-kicker">步骤三</span>
-                <h2>{view.resultSection.title}</h2>
-              </div>
-              <button
-                className="secondary-button"
-                type="button"
-                disabled={isExporting || !view.latestJob}
-                onClick={handleExportLatestJob}
-              >
-                {isExporting ? "正在导出" : "导出结果"}
-              </button>
-            </div>
-
-            {view.resultSection.message ? (
-              <div className={`result-banner result-${view.resultSection.state}`}>
-                {view.resultSection.message}
-              </div>
-            ) : null}
-
-            <ResultFilterTabs
-              filters={view.resultSection.filters}
-              activeKey={view.resultSection.activeFilterKey}
-              onChange={setSelectedResultType}
-            />
-
-            {view.resultSection.previewImageUrl ? (
-              <div className="preview-card">
-                <img src={view.resultSection.previewImageUrl} alt="生成效果图" />
-              </div>
-            ) : null}
-
-            {view.resultSection.cards.length > 0 ? (
-              <div className="result-list">
-                {view.resultSection.cards.map((card) => (
-                  <article key={card.id} className={`result-card tone-${card.sourceTone}`}>
-                    <div className="result-card-head">
-                      <div className="result-meta">
-                        <span className="result-type">{card.typeLabel}</span>
-                        <span className={`source-badge source-${card.sourceTone}`}>
-                          <span className="source-icon">{card.sourceIcon}</span>
-                          {card.sourceLabel}
-                        </span>
-                      </div>
-                      <div className="result-actions">
-                        <button type="button" onClick={() => handleCopyResult(card)}>
-                          复制内容
-                        </button>
-                        {card.showExpand ? (
-                          <button type="button" onClick={() => handleToggleExpand(card.id)}>
-                            {card.expanded ? "收起" : "展开全文"}
-                          </button>
-                        ) : null}
-                      </div>
+                  {packPreview.pending.map((item) => (
+                    <div className="pack-price-row" key={item.productId}>
+                      <span className="pack-price-name">{item.name}</span>
+                      <input
+                        className="pack-price-input"
+                        type="text"
+                        inputMode="decimal"
+                        placeholder={item.suggestedPrice ? `FOB ${item.suggestedPrice}` : "填写零售价"}
+                        value={packPrices[item.productId] || ""}
+                        onChange={(event) =>
+                          setPackPrices((current) => ({
+                            ...current,
+                            [item.productId]: event.target.value,
+                          }))
+                        }
+                      />
                     </div>
+                  ))}
+                  <p className="pack-hint">
+                    留空的商品不会写入 price，导入商城时会被跳过，不会瞎填价格。
+                  </p>
+                </div>
+              ) : (
+                <p className="pack-hint">所有商品都已有价格，可直接打包。</p>
+              )}
 
-                    {card.imageUrl ? (
-                      <div className="result-image-shell">
-                        <img src={card.imageUrl} alt={card.typeLabel} />
-                      </div>
-                    ) : null}
+              <label className="pack-publish">
+                <input
+                  type="checkbox"
+                  checked={packPublish}
+                  onChange={(event) => setPackPublish(event.target.checked)}
+                />
+                导入后直接上架（不勾选则为下架态，需人工确认后发布）
+              </label>
 
-                    <pre className="result-content">
-                      {card.expanded ? card.content : card.previewText || "暂无内容"}
-                    </pre>
-
-                    {card.reasonLabel ? <p className="result-reason">{card.reasonLabel}</p> : null}
-                    {card.modelLabel ? <p className="result-model">模型：{card.modelLabel}</p> : null}
-                  </article>
-                ))}
-              </div>
-            ) : (
-              <div className="empty-state">
-                <strong>
-                  {view.resultSection.state === "pending" ? "正在生成中" : "暂无生成结果"}
-                </strong>
-                <p>
-                  {view.resultSection.state === "pending"
-                    ? "图片和文案会在任务完成后自动写回这里。"
-                    : "创建任务后，这里会优先展示最终结果。"}
+              {packPreview.skipped?.length > 0 ? (
+                <p className="pack-warning">
+                  {packPreview.skipped.length} 件被跳过：
+                  {packPreview.skipped.map((item) => `${item.name || item.productId}（${item.reason}）`).join("、")}
                 </p>
+              ) : null}
+
+              {pushResult ? (
+                <div className="pack-result">
+                  <strong>推送结果</strong>
+                  <span>
+                    目标 {pushResult.target?.tenantSlug} · 成功 {pushResult.createdCount} 件 ·
+                    失败 {pushResult.errorCount} 件
+                  </span>
+                  {(pushResult.errors || []).length > 0 ? (
+                    <ul>
+                      {pushResult.errors.slice(0, 5).map((item, index) => (
+                        <li key={`${item.name}-${index}`}>
+                          {item.name || "未命名"}：{item.reason}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </div>
+              ) : null}
+
+              <div className="pack-panel-foot">
+                <button
+                  className="secondary-button"
+                  type="button"
+                  onClick={() => setPackPanelOpen(false)}
+                >
+                  取消
+                </button>
+                <button
+                  className="secondary-button"
+                  type="button"
+                  disabled={isPacking}
+                  onClick={handleDownloadPack}
+                >
+                  下载成品包
+                </button>
+                <button
+                  className="primary-button"
+                  type="button"
+                  disabled={isPacking || !commercePush.configured}
+                  title={
+                    commercePush.configured
+                      ? `推送到 ${commercePush.tenantSlug}`
+                      : "未配置商城直推参数"
+                  }
+                  onClick={handlePushToCommerce}
+                >
+                  {isPacking ? "正在推送" : "推送到商城"}
+                </button>
               </div>
-            )}
-          </article>
-        </section>
-      </section>
-    </main>
+
+              {!commercePush.configured ? (
+                <p className="pack-hint">
+                  直推未开启。在 api-server 配置 COMMERCE_IMPORT_URL、COMMERCE_IMPORT_TOKEN、
+                  COMMERCE_TENANT_SLUG 后可用，也可以先下载成品包手动上传。
+                </p>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
+
+        <div className="main-content">{workspaceMode === "ip" ? <IPWorkspace /> : renderChatStep()}</div>
+      </div>
+    </div>
   );
 }

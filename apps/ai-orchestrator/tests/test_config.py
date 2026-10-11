@@ -42,6 +42,20 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.video_poll_interval_sec, 5.0)
         self.assertEqual(settings.video_max_attempts, 360)
 
+    def test_callback_retry_settings_are_loaded_from_environment(self):
+        with patch.dict(
+            os.environ,
+            {
+                "AI_CALLBACK_MAX_ATTEMPTS": "5",
+                "AI_CALLBACK_BACKOFF_SEC": "0.25",
+            },
+            clear=True,
+        ):
+            settings = Settings.from_env()
+
+        self.assertEqual(settings.callback_max_attempts, 5)
+        self.assertEqual(settings.callback_backoff_sec, 0.25)
+
     def test_openai_key_selects_openai_video_provider_by_default(self):
         with patch.dict(os.environ, {"OPENAI_API_KEY": "openai-token"}, clear=True):
             settings = Settings.from_env()
@@ -78,8 +92,8 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.text_provider, "agnes")
         self.assertEqual(settings.image_provider, "agnes")
         self.assertEqual(settings.video_provider, "agnes")
-        self.assertEqual(settings.agnes_text_model, "agnes-2.0-flash")
-        self.assertEqual(settings.agnes_image_model, "agnes-image-2.1-flash")
+        self.assertEqual(settings.agnes_text_model, "agnes-2.5-flash")
+        self.assertEqual(settings.agnes_image_model, "agnes-image-2.5-flash")
         self.assertEqual(settings.agnes_video_model, "agnes-video-v2.0")
 
     def test_explicit_provider_env_can_override_agnes_defaults(self):

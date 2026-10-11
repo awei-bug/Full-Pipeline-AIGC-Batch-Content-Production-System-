@@ -1,0 +1,744 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head>
+    <script type="module">import { injectIntoGlobalHook } from "/@react-refresh";
+injectIntoGlobalHook(window);
+window.$RefreshReg$ = () => {};
+window.$RefreshSig$ = () => (type) => type;</script>
+
+    <script type="module" src="/@vite/client"></script>
+
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>多Agent数字IP内容生成平台</title>
+    <script type="module" src="/src/main.jsx"></script>
+  <style type="text/css" data-vite-dev-id="F:/Python_code/content_create/apps/studio-web/src/styles.css">:root {
+  color-scheme: light;
+  font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  line-height: 1.5;
+  --bg: #f4f7fb;
+  --panel: #ffffff;
+  --line: #e5eaf2;
+  --text: #1f2937;
+  --muted: #6b7280;
+  --primary: #1d4ed8;
+  --primary-soft: #dbeafe;
+  --success: #15803d;
+  --warning: #b45309;
+  --danger: #b91c1c;
+  --sidebar: #0f172a;
+  --sidebar-text: #e2e8f0;
+  --radius: 12px;
+  --shadow: 0 10px 30px rgba(15, 23, 42, 0.06);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  min-width: 1080px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+button {
+  border: 0;
+  cursor: pointer;
+}
+
+.app-shell {
+  display: grid;
+  grid-template-columns: 248px minmax(0, 1fr);
+  min-height: 100vh;
+}
+
+.sidebar {
+  background: var(--sidebar);
+  color: var(--sidebar-text);
+  padding: 18px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.sidebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px 4px;
+}
+
+.brand-mark {
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #60a5fa, #1d4ed8);
+  flex: 0 0 auto;
+}
+
+.sidebar-brand strong {
+  display: block;
+  font-size: 15px;
+  color: #f8fafc;
+}
+
+.sidebar-brand span {
+  display: block;
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+.sidebar-nav {
+  display: grid;
+  gap: 8px;
+}
+
+.nav-item {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  min-height: 64px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: transparent;
+  color: #cbd5e1;
+  text-align: left;
+}
+
+.nav-item:hover,
+.nav-item.is-active {
+  background: rgba(29, 78, 216, 0.28);
+  color: #fff;
+}
+
+.nav-index {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  background: rgba(255, 255, 255, 0.08);
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.nav-item.is-active .nav-index {
+  background: rgba(96, 165, 250, 0.24);
+  color: #dbeafe;
+}
+
+.nav-copy {
+  display: grid;
+  gap: 2px;
+}
+
+.nav-copy strong {
+  font-size: 14px;
+}
+
+.nav-copy em {
+  font-size: 12px;
+  color: #94a3b8;
+  font-style: normal;
+}
+
+.nav-item.is-active .nav-copy em {
+  color: #bfdbfe;
+}
+
+.sidebar-foot {
+  margin-top: auto;
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+.system-status {
+  display: inline-flex;
+  width: fit-content;
+  min-height: 26px;
+  align-items: center;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: rgba(21, 128, 61, 0.18);
+  color: #86efac;
+}
+
+.main-panel {
+  min-width: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: center;
+  padding: 18px 24px 12px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(8px);
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+
+.eyebrow {
+  margin: 0 0 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.topbar h1 {
+  margin: 0;
+  font-size: 24px;
+  line-height: 1.2;
+  color: #0f172a;
+}
+
+.topbar-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.topbar-status > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: #f8fafc;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.topbar-status strong {
+  color: #0f172a;
+  font-size: 13px;
+}
+
+.topbar-export {
+  min-height: 36px;
+}
+
+.main-content {
+  padding: 18px 24px 28px;
+  width: 100%;
+  min-width: 0;
+}
+
+.step-page {
+  display: grid;
+  gap: 16px;
+  width: 100%;
+  max-width: none;
+}
+
+.panel,
+.guide-empty,
+.empty-state,
+.preview-card,
+.table-shell,
+.result-filter-tabs,
+.result-banner,
+.batch-option,
+.type-card,
+.job-card,
+.result-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.panel {
+  padding: 18px;
+  box-shadow: var(--shadow);
+}
+
+.panel-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+  margin-bottom: 16px;
+}
+
+.panel-kicker {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.panel-top h2 {
+  margin: 0;
+  font-size: 20px;
+  color: #0f172a;
+}
+
+.panel-note {
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: #f8fafc;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.section-block {
+  margin-bottom: 16px;
+}
+
+.section-title {
+  margin: 0 0 10px;
+  font-size: 14px;
+  color: #334155;
+}
+
+.action-cluster,
+.result-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 14px;
+  align-items: center;
+}
+
+.upload-button,
+.primary-button,
+.secondary-button,
+.result-actions button {
+  min-height: 40px;
+  padding: 0 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+}
+
+.upload-button {
+  background: #f8fafc;
+  border: 1px solid var(--line);
+  color: var(--text);
+}
+
+.upload-button input {
+  display: none;
+}
+
+.action-hint {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.primary-button {
+  background: var(--primary);
+  color: #fff;
+  font-weight: 700;
+}
+
+.primary-button:disabled,
+.secondary-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.secondary-button,
+.result-actions button {
+  background: #f8fafc;
+  border: 1px solid var(--line);
+  color: var(--text);
+}
+
+.import-form,
+.field-block,
+.batch-selector-list,
+.type-grid,
+.job-list,
+.result-list {
+  display: grid;
+  gap: 12px;
+}
+
+.field-block span {
+  display: block;
+  margin-bottom: 6px;
+  color: #334155;
+  font-size: 13px;
+}
+
+.field-block input,
+.field-block textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--text);
+  padding: 12px 14px;
+  outline: none;
+}
+
+.field-block textarea {
+  min-height: 220px;
+  resize: vertical;
+}
+
+.field-block input:focus,
+.field-block textarea:focus {
+  border-color: #93c5fd;
+  box-shadow: 0 0 0 3px rgba(29, 78, 216, 0.12);
+}
+
+.batch-option,
+.type-card,
+.job-card,
+.result-card {
+  padding: 14px;
+}
+
+.batch-option,
+.type-card {
+  text-align: left;
+  background: #fff;
+}
+
+.batch-option span,
+.type-card span,
+.job-card p,
+.empty-state p,
+.guide-empty p,
+.result-model {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.batch-option.is-active,
+.type-card.is-active {
+  border-color: #93c5fd;
+  background: var(--primary-soft);
+}
+
+.type-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.table-shell {
+  overflow: hidden;
+}
+
+.table-header-row,
+.table-data-row {
+  display: grid;
+  grid-template-columns: 1.1fr 1.1fr 0.9fr 0.8fr 0.9fr 1fr;
+  gap: 8px;
+  padding: 10px 12px;
+}
+
+.table-header-row {
+  background: #f8fafc;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.table-body {
+  display: grid;
+}
+
+.table-data-row {
+  border-bottom: 1px solid #f1f5f9;
+  font-size: 12px;
+}
+
+.table-data-row:last-child {
+  border-bottom: 0;
+}
+
+.job-card-header,
+.result-card-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+  margin-bottom: 12px;
+}
+
+.job-status,
+.source-badge {
+  min-height: 28px;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 999px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.job-status.tone-success,
+.source-model {
+  background: #dcfce7;
+  color: var(--success);
+}
+
+.job-status.tone-warning,
+.source-fallback {
+  background: #ffedd5;
+  color: var(--warning);
+}
+
+.job-status.tone-danger {
+  background: #fee2e2;
+  color: var(--danger);
+}
+
+.job-status.tone-running {
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+.job-status.tone-pending,
+.source-system {
+  background: #f1f5f9;
+  color: #475569;
+}
+
+.progress-line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.progress-track {
+  height: 8px;
+  border-radius: 999px;
+  background: #e2e8f0;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #2563eb, #60a5fa);
+}
+
+.result-banner,
+.guide-empty {
+  padding: 18px;
+}
+
+.guide-empty {
+  width: 100%;
+  min-height: 280px;
+  display: grid;
+  gap: 10px;
+  align-content: center;
+  justify-items: start;
+  box-shadow: var(--shadow);
+}
+
+.guide-empty strong,
+.empty-state strong {
+  color: #0f172a;
+  font-size: 16px;
+}
+
+.result-banner {
+  margin-bottom: 12px;
+  color: #334155;
+  font-size: 13px;
+}
+
+.result-banner.result-pending {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+}
+
+.result-filter-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px;
+  margin-bottom: 12px;
+}
+
+.result-filter-tab {
+  flex: 1 1 120px;
+  min-height: 48px;
+  display: grid;
+  justify-items: start;
+  gap: 2px;
+  padding: 8px 10px;
+  background: transparent;
+  border-radius: 10px;
+  color: #334155;
+}
+
+.result-filter-tab.is-active {
+  background: var(--primary-soft);
+  border: 1px solid #93c5fd;
+}
+
+.preview-card {
+  padding: 12px;
+  margin-bottom: 12px;
+}
+
+.preview-card img,
+.result-image-shell img {
+  display: block;
+  width: 100%;
+  max-height: 280px;
+  object-fit: cover;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.result-card.tone-model {
+  border-left: 4px solid var(--success);
+}
+
+.result-card.tone-fallback {
+  border-left: 4px solid var(--warning);
+}
+
+.result-card.tone-system {
+  border-left: 4px solid #94a3b8;
+}
+
+.result-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.result-type {
+  font-weight: 700;
+  color: #0f172a;
+  font-size: 13px;
+}
+
+.source-icon {
+  line-height: 1;
+}
+
+.result-content {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #0f172a;
+  font-size: 13px;
+  line-height: 1.7;
+  font-family: inherit;
+  max-height: 180px;
+  overflow: hidden;
+}
+
+.result-reason {
+  margin: 10px 0 0;
+  color: var(--warning);
+  font-size: 12px;
+}
+
+.result-model {
+  margin: 8px 0 0;
+}
+
+.empty-state {
+  min-height: 140px;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  padding: 18px;
+}
+
+.empty-state.compact {
+  min-height: 100px;
+}
+
+.status-toast {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 30;
+  min-width: 280px;
+  max-width: 420px;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: var(--shadow);
+}
+
+.status-toast-error {
+  border-color: #fecaca;
+}
+
+.status-toast-success {
+  border-color: #bbf7d0;
+}
+
+@media (max-width: 1200px) {
+  body {
+    min-width: 0;
+  }
+
+  .app-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+
+  .sidebar-nav {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .type-grid,
+  .table-header-row,
+  .table-data-row {
+    grid-template-columns: 1fr;
+  }
+
+  .topbar {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+</style></head>
+  <body>
+    <div id="root"><div class="app-shell"><aside class="sidebar" aria-label="流程导航"><div class="sidebar-brand"><div class="brand-mark" aria-hidden="true"></div><div><strong>外贸 AIGC</strong><span>批量内容工作台</span></div></div><nav class="sidebar-nav"><button type="button" class="nav-item is-active"><span class="nav-index">1</span><span class="nav-copy"><strong>导入产品</strong><em>上传或粘贴产品表</em></span></button><button type="button" class="nav-item "><span class="nav-index">2</span><span class="nav-copy"><strong>创建任务</strong><em>选择内容类型并生成</em></span></button><button type="button" class="nav-item "><span class="nav-index">3</span><span class="nav-copy"><strong>查看结果</strong><em>预览、复制与导出</em></span></button></nav><div class="sidebar-foot"><span class="system-status">运行中</span><span>面向工厂外贸与跨境业务</span></div></aside><div class="main-panel"><header class="topbar"><div class="topbar-title"><p class="eyebrow">外贸内容生产</p><h1>导入产品</h1></div><div class="topbar-status" aria-label="当前状态"><span>批次<strong>未选择</strong></span><span>状态<strong>暂无任务</strong></span><span>完成度<strong>0%</strong></span></div></header><div class="main-content"><div class="step-page"><section class="panel"><div class="panel-top"><div><span class="panel-kicker">步骤一</span><h2>导入产品数据</h2></div><span class="panel-note">支持 CSV / XLSX / XLS</span></div><div class="action-cluster"><label class="upload-button"><input type="file" accept=".csv,.xlsx,.xls"><span>上传文件</span></label><span class="action-hint">也可以直接粘贴 CSV 内容</span></div><form class="import-form"><label class="field-block"><span>批次文件名</span><input placeholder="例如：export-products.csv" value="export-products.csv"></label><label class="field-block"><span>产品数据</span><textarea rows="10" placeholder="第一行为表头，用逗号分隔字段。">产品名称,核心卖点,报价/MOQ,品类,目标市场,应用场景
+不锈钢水杯,食品级材质，支持定制Logo,FOB $2.8 / MOQ 500,日用百货,美国/欧洲,礼品与商超渠道
+工业连接器,高防护等级，支持批量OEM,FOB $1.2 / MOQ 1000,电子元器件,东南亚/中东,设备配套与工程采购</textarea></label><button class="primary-button" type="submit">创建导入批次</button></form></section><section class="panel"><div class="panel-top"><div><span class="panel-kicker">当前批次产品</span><h2>产品清单</h2></div><span class="panel-note">0 条</span></div><div class="empty-state"><strong>暂无产品数据</strong><p>先导入产品数据，再创建批量内容任务。</p></div></section></div></div></div></div></div>
+  
+
+</body></html>

@@ -4,6 +4,8 @@ import express from "express";
 import cors from "cors";
 import { projectsRouter } from "./routes/projects.js";
 import { creationRequestsRouter } from "./routes/creation-requests.js";
+import { chatRouter } from "./routes/chat.js";
+import { contentWorkflowsRouter } from "./routes/content-workflows.js";
 import { tasksRouter } from "./routes/tasks.js";
 import { worksRouter } from "./routes/works.js";
 import { importBatchesRouter } from "./routes/import-batches.js";
@@ -13,8 +15,15 @@ import { contentOutputsRouter } from "./routes/content-outputs.js";
 import { contentExportsRouter } from "./routes/content-exports.js";
 import { batchItemEventsRouter } from "./routes/batch-item-events.js";
 import { orchestratorEventsRouter } from "./routes/orchestrator-events.js";
+import { listingPacksRouter } from "./routes/listing-packs.js";
+import { dataHubRouter } from "./routes/data-hub.js";
+import { createListingPackService } from "./services/listing-pack-service.js";
+import { createDataHubSyncService } from "./services/data-hub-sync-service.js";
+import { createCommerceIntegrationClient } from "./lib/commerce-integration-client.js";
+import { createDataHubClient } from "./lib/data-hub-client.js";
 import { createPool, hasDatabaseConfig } from "./lib/database.js";
 import { createAiOrchestratorClient, hasAiOrchestratorConfig } from "./lib/ai-orchestrator-client.js";
+import { ipContentRouter } from "./routes/ip-content.js";
 import { MemoryProjectsRepository, PostgresProjectsRepository } from "./repositories/projects-repository.js";
 import {
   MemoryImportBatchesRepository,
@@ -53,7 +62,20 @@ export async function buildApp({ env = process.env } = {}) {
     : new MemoryContentJobsRepository(productsRepository);
   const workflowRepository = pool ? new PostgresWorkflowRepository(pool) : new MemoryWorkflowRepository();
   const aiOrchestratorClient = createAiOrchestratorClient(env);
+  const listingPackService = createListingPackService({
+    repository: contentJobsRepository,
+    assetsDir,
+  });
 
+  const dataHubClient = createDataHubClient(env);
+  const dataHubSyncService = dataHubClient
+    ? createDataHubSyncService({ listingPackService, dataHubClient, repository: contentJobsRepository })
+    : null;
+
+  app.locals.listingPackService = listingPackService;
+  app.locals.dataHubClient = dataHubClient;
+  app.locals.dataHubSyncService = dataHubSyncService;
+  app.locals.commerceIntegrationClient = createCommerceIntegrationClient(env);
   app.locals.pool = pool;
   app.locals.projectsRepository = projectsRepository;
   app.locals.importBatchesRepository = importBatchesRepository;
@@ -63,6 +85,7 @@ export async function buildApp({ env = process.env } = {}) {
   app.locals.aiOrchestratorClient = aiOrchestratorClient;
 
   app.use(cors());
+  app.use("/api/ip-content", express.json({ limit: "2mb" }));
   app.use(express.json());
   app.use("/storage/assets", express.static(assetsDir));
 
@@ -79,6 +102,10 @@ export async function buildApp({ env = process.env } = {}) {
         databaseConfigured: dbConfigured,
         aiOrchestratorConfigured,
         aiOrchestratorMode: aiOrchestratorClient?.mode || "disabled",
+        commercePushConfigured: Boolean(app.locals.commerceIntegrationClient),
+        commercePushTenant: app.locals.commerceIntegrationClient?.target?.tenantSlug || null,
+        dataHubConfigured: Boolean(dataHubClient),
+        dataHubTarget: dataHubClient?.target?.baseUrl || null,
       },
     });
   });
@@ -89,16 +116,25 @@ export async function buildApp({ env = process.env } = {}) {
   app.use("/api/content-jobs", contentJobsRouter);
   app.use("/api/content-outputs", contentOutputsRouter);
   app.use("/api/content-exports", contentExportsRouter);
+  app.use("/api/listing-packs", listingPacksRouter);
+  app.use("/api/data-hub", dataHubRouter);
   app.use("/api/creation-requests", creationRequestsRouter);
+  app.use("/api/chat", chatRouter);
+  app.use("/api/content-workflows", contentWorkflowsRouter);
+  app.use("/api/ip-content", ipContentRouter);
   app.use("/api/tasks", tasksRouter);
   app.use("/api/works", worksRouter);
   app.use("/internal/orchestrator", orchestratorEventsRouter);
   app.use("/internal/batch-items/events", batchItemEventsRouter);
 
   app.use((error, _request, response, _next) => {
-    response.status(500).json({
-      code: "INTERNAL_ERROR",
-      message: error.message || "服务异常",
+    const statusCode = Number(error?.statusCode || error?.status);
+    const status = Number.isInteger(statusCode) && statusCode >= 400 && statusCode <= 599
+      ? statusCode
+      : 500;
+    response.status(status).json({
+      code: error?.code || (status >= 500 ? "INTERNAL_ERROR" : "REQUEST_ERROR"),
+      message: error?.message || "服务异常",
       data: null,
     });
   });

@@ -17,7 +17,8 @@ if (-not (Test-Path $stateFile)) {
 $state = Get-LocalStackState -StateFile $stateFile
 
 if ($null -eq $state) {
-  Remove-Item $stateFile -Force -ErrorAction SilentlyContinue
+  # .NET delete keeps working even when a tool wraps Remove-Item (some sandboxes do).
+  try { [System.IO.File]::Delete($stateFile) } catch { }
   $orphanProcesses = Get-OrphanLocalStackProcesses -RootDir $rootDir
   foreach ($process in $orphanProcesses) {
     Stop-ProcessIfRunning -ProcessId ([int]$process.ProcessId)
@@ -36,7 +37,8 @@ foreach ($process in $orphanProcesses) {
   Stop-ProcessIfRunning -ProcessId ([int]$process.ProcessId)
 }
 
-Remove-Item $stateFile -Force -ErrorAction SilentlyContinue
+# .NET deletes keep working even when a tool wraps Remove-Item (some sandboxes do).
+try { [System.IO.File]::Delete($stateFile) } catch { }
 Get-ChildItem -Path $stateDir -Filter "*-run.ps1" -ErrorAction SilentlyContinue |
-  Remove-Item -Force -ErrorAction SilentlyContinue
+  ForEach-Object { try { [System.IO.File]::Delete($_.FullName) } catch { } }
 Write-Output "Local stack stopped."

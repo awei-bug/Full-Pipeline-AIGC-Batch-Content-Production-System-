@@ -63,6 +63,12 @@ class GenerationProvider:
     async def generate_copy(self, product: dict[str, Any]) -> dict[str, Any]:
         return await self._text_provider.generate_copy(product)
 
+    async def chat(self, messages: list[dict[str, str]]) -> dict[str, Any]:
+        chat_method = getattr(self._text_provider, "chat", None)
+        if not callable(chat_method):
+            raise RuntimeError("当前文本模型未提供对话能力。")
+        return await chat_method(messages)
+
     async def generate_script(self, product: dict[str, Any], copy: dict[str, Any]) -> dict[str, Any]:
         return await self._text_provider.generate_script(product, copy)
 
@@ -93,6 +99,34 @@ class GenerationProvider:
         first_output = result.outputs[0]
         return {
             "outputType": "image_asset",
+            "outputData": first_output.model_dump(by_alias=True),
+        }
+
+    async def generate_video_asset(
+        self,
+        workflow_task_id: str,
+        product: dict[str, Any],
+        script: dict[str, Any],
+    ) -> dict[str, Any]:
+        prompt = str(
+            script.get("videoPrompt")
+            or script.get("prompt")
+            or script.get("script")
+            or ""
+        ).strip()
+        payload = WorkflowRequest(
+            projectId=str(product.get("id") or "batch-project"),
+            creationRequestId=f"batch_{workflow_task_id}",
+            taskId=f"batch_{workflow_task_id}",
+            prompt=prompt or f"{product.get('name', '商品')}产品宣传视频",
+            requestType="text_to_video",
+            aspectRatio="16:9",
+            durationSec=8,
+        )
+        result = await self.generate(workflow_task_id, payload)
+        first_output = result.outputs[0]
+        return {
+            "outputType": "video_asset",
             "outputData": first_output.model_dump(by_alias=True),
         }
 

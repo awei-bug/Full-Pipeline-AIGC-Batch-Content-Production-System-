@@ -7,19 +7,20 @@
 - `npm run mvp:check` 通过。
 - `npm run stack:start` 能同时启动 API 服务、AI 编排器和前端。
 - 前端地址 `http://127.0.0.1:5173` 能打开。
-- 页面默认进入“文生图”模式。
-- 输入文本后可以提交图片生成任务。
-- 生成中显示“图片正在生成中”。
-- 任务成功后右侧展示最终图片。
-- 生成结果保存为作品和资产记录。
+- 页面默认进入外贸批量内容工作台。
+- 可导入 CSV / XLSX 产品数据。
+- 可勾选内容类型并创建批量任务。
+- 任务进行中显示生成中状态，并自动刷新进度。
+- 任务成功后展示英文 Listing / 开发信 / 产品图提示词 / 效果图。
+- 可导出 Excel 结果。
 - `.local-stack/`、`data/platform-db.json`、`storage/`、`*.db`、`*.log` 不进入 Git。
 
 ## 真实图片链路验收
 
 前置条件：
 
-- 系统环境变量已配置 `MODELSCOPE_API_TOKEN`。
-- PostgreSQL 已启动并初始化，或使用本地开发存储。
+- 系统环境变量已配置 `AGNES_API_KEY` 或 `MODELSCOPE_API_TOKEN`。
+- PostgreSQL 已启动并初始化，或使用本地内存模式。
 - 本地三服务已经启动。
 
 执行：
@@ -37,7 +38,7 @@ npm run stack:smoke:image
 
 ## 当前不作为 MVP 通过标准
 
-- 文生视频生成可播放成片。视频可以单独验收，但不阻塞图片 MVP。
+- 文生视频生成可播放成片。视频可单独验收，不阻塞图片 / 批量内容 MVP。
 - 账号登录和权限。
 - 团队协作。
 - 配额计费。
@@ -46,10 +47,10 @@ npm run stack:smoke:image
 
 ## 视频能力当前状态
 
-视频入口保留为实验能力。当前支持两条路线：
+视频入口保留为实验能力。当前支持：
 
-- 魔塔路线：`Wan-AI/Wan2.1-T2V-1.3B` 能通过魔塔 API 创建任务，但任务可能长时间保持 `RUNNING`，没有稳定返回视频 URL。
-- OpenAI 路线：配置 `OPENAI_API_KEY` 后，AI 编排器可以走 OpenAI Videos API 创建、轮询并下载视频结果。
+- 魔塔路线：`Wan-AI/Wan2.1-T2V-1.3B` 能创建任务，但可能长时间 `RUNNING`。
+- OpenAI 路线：配置 `OPENAI_API_KEY` 后可走 OpenAI Videos API。
 
 ## OpenAI 视频实验验收
 
@@ -58,7 +59,6 @@ npm run stack:smoke:image
 - 系统环境变量已配置 `OPENAI_API_KEY`。
 - OpenAI API 账号有视频模型权限和可用余额。
 - 本地三服务已经通过 `npm run stack:start` 启动。
-- 前端显示“文生视频（实验中）”并允许提交。
 
 执行：
 
@@ -79,4 +79,4 @@ npm run stack:smoke:video
 Get-Content .local-stack\ai-orchestrator.err.log
 ```
 
-视频失败不影响图片 MVP。等视频稳定后，再把它从“实验中”升级为正式能力。
+视频失败不影响批量内容 MVP。

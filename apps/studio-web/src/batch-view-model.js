@@ -2,6 +2,10 @@ function ensureList(value) {
   return Array.isArray(value) ? value : [];
 }
 
+export function shouldPollContentJob(job) {
+  return ["created", "queued", "pending", "running"].includes(job?.status);
+}
+
 function normalizeBaseUrl(value) {
   return String(value || "").trim().replace(/\/+$/, "");
 }
@@ -35,15 +39,17 @@ function normalizeContentTypes(contentTypes) {
 function getContentTypeLabel(contentType) {
   switch (contentType) {
     case "marketing_copy":
-      return "营销文案";
+      return "英文Listing";
     case "video_script":
       return "视频脚本";
+    case "video_asset":
+      return "产品视频";
     case "image_prompt":
-      return "海报提示词";
+      return "产品图提示词";
     case "image_asset":
-      return "效果图片";
+      return "产品效果图";
     default:
-      return "内容结果";
+      return "外贸内容";
   }
 }
 
@@ -110,7 +116,7 @@ function getSourcePresentation(generationMeta) {
     return {
       label: "系统兜底",
       tone: "fallback",
-      icon: "🛡",
+      icon: "🛡️",
     };
   }
 
@@ -163,7 +169,7 @@ function getImageUrl(output, apiBaseUrl) {
 }
 
 function shouldShowExpand(content, outputType) {
-  if (outputType === "image_asset") {
+  if (outputType === "image_asset" || outputType === "video_asset") {
     return false;
   }
   if (outputType === "video_script") {
@@ -187,8 +193,10 @@ function buildResultCard(output, expandedResultIds, apiBaseUrl) {
     content,
     previewText:
       output?.outputType === "image_asset"
-        ? "图片结果已生成，可直接预览和导出。"
-        : expanded
+        ? "产品图已生成，可直接预览和导出。"
+        : output?.outputType === "video_asset"
+          ? "产品视频已生成，可直接预览和导出。"
+          : expanded
           ? content
           : String(content).slice(0, 88).trim(),
     expanded,
@@ -199,7 +207,10 @@ function buildResultCard(output, expandedResultIds, apiBaseUrl) {
     sourceIcon: source.icon,
     reasonLabel: getReasonLabel(output?.outputData?.generationMeta?.reason),
     modelLabel: String(output?.outputData?.generationMeta?.model || "").trim(),
-    imageUrl: output?.outputType === "image_asset" ? getImageUrl(output, apiBaseUrl) : "",
+    imageUrl:
+      output?.outputType === "image_asset" ? getImageUrl(output, apiBaseUrl) : "",
+    videoUrl:
+      output?.outputType === "video_asset" ? getImageUrl(output, apiBaseUrl) : "",
     createdAt: output?.createdAt || "",
   };
 }
@@ -214,7 +225,14 @@ function buildFilters(outputs) {
     { all: outputs.length },
   );
 
-  const orderedKeys = ["all", "marketing_copy", "video_script", "image_prompt", "image_asset"];
+  const orderedKeys = [
+    "all",
+    "marketing_copy",
+    "video_script",
+    "image_prompt",
+    "image_asset",
+    "video_asset",
+  ];
   return orderedKeys
     .filter((key) => counts[key] > 0 || key === "all")
     .map((key) => ({
@@ -241,7 +259,7 @@ function buildActiveBatch(activeBatch, activeProducts) {
   return {
     ...activeBatch,
     title: activeBatch.fileName || "未命名批次",
-    subtitle: `共 ${count} 条商品，已导入工作台`,
+    subtitle: `共 ${count} 条产品，已导入外贸工作台`,
   };
 }
 
@@ -250,7 +268,7 @@ function buildOverviewCards(batchCount, activeProducts, activeJobs, latestJob) {
     {
       label: "导入批次",
       value: String(batchCount),
-      detail: `当前批次商品 ${activeProducts.length} 条`,
+      detail: `当前批次产品 ${activeProducts.length} 条`,
     },
     {
       label: "批量任务",
@@ -267,11 +285,11 @@ function buildOverviewCards(batchCount, activeProducts, activeJobs, latestJob) {
 
 function buildProductTable(products) {
   return {
-    columns: ["商品名称", "核心卖点", "价格", "分类", "目标人群", "使用场景"],
+    columns: ["产品名称", "核心卖点", "报价/MOQ", "品类", "目标市场", "应用场景"],
     rows: products.map((product) => ({
       id: product.id,
       cells: [
-        product.name || product.productName || "未命名商品",
+        product.name || product.productName || "未命名产品",
         product.sellingPoint || product.highlight || "暂无卖点",
         String(product.price || "未填写"),
         product.category || "未分类",
@@ -279,7 +297,7 @@ function buildProductTable(products) {
         product.scenario || "未填写",
       ],
     })),
-    emptyMessage: "暂无商品数据，请先导入商品表。",
+    emptyMessage: "先导入产品数据，再创建批量内容任务。",
   };
 }
 
@@ -317,7 +335,7 @@ function buildResultSection(latestJob, outputs, selectedResultType, expandedResu
     return {
       state: "empty",
       title: "等待生成结果",
-      message: "导入商品并创建批量任务后，这里会集中展示文案、脚本、提示词和效果图片。",
+      message: "导入产品并创建批量任务后，这里会集中展示英文Listing、开发信、产品图提示词和效果图。",
       activeFilterKey,
       filters,
       cards,
@@ -325,11 +343,11 @@ function buildResultSection(latestJob, outputs, selectedResultType, expandedResu
     };
   }
 
-  if (latestJob && ["created", "queued", "pending", "running"].includes(latestJob.status)) {
+  if (latestJob && shouldPollContentJob(latestJob)) {
     return {
       state: "pending",
-      title: "图片正在生成中",
-      message: "任务已提交，系统正在继续生成剩余内容，请稍后刷新查看最终结果。",
+      title: "外贸内容正在生成中",
+      message: "任务已提交，系统正在生成英文内容与产品图，完成后会自动刷新结果。",
       activeFilterKey,
       filters,
       cards,
@@ -376,7 +394,7 @@ export function deriveBatchWorkspaceView({
     : [];
   const activeBatch = buildActiveBatch(activeBatchRecord, activeProducts);
   const steps = [
-    { key: "import", title: "导入商品数据" },
+    { key: "import", title: "导入产品数据" },
     { key: "job", title: "创建批量任务" },
     { key: "result", title: "查看生成结果" },
   ].map((step, index) => {
@@ -393,7 +411,7 @@ export function deriveBatchWorkspaceView({
     jobCount: jobItems.length,
     outputCount: outputItems.length,
     empty: batchItems.length === 0 && jobItems.length === 0 && outputItems.length === 0,
-    emptyMessage: "先导入商品数据，再创建批量内容任务。",
+    emptyMessage: "先导入产品数据，再创建批量内容任务。",
     steps,
     activeBatch,
     activeProducts,
@@ -413,7 +431,7 @@ export function deriveBatchWorkspaceView({
     batchOptions: batchItems.map((batch) => ({
       id: batch.id,
       title: batch.fileName || "未命名批次",
-      subtitle: `共 ${batch.productCount || 0} 条商品`,
+      subtitle: `共 ${batch.productCount || 0} 条产品`,
       createdAt: batch.createdAt || "",
       selected: batch.id === (activeBatchRecord?.id || ""),
     })),

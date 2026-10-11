@@ -38,6 +38,7 @@ Invoke-Step "node service and ui tests" {
       apps/api-server/src/services/content-export-service.test.js `
       apps/api-server/src/services/creation-request-service.test.js `
       apps/api-server/src/services/task-event-service.test.js `
+      apps/api-server/src/routes/batch-item-events.test.js `
       apps/studio-web/src/batch-api.test.js `
       apps/studio-web/src/batch-view-model.test.js `
       apps/studio-web/src/capabilities.test.js `

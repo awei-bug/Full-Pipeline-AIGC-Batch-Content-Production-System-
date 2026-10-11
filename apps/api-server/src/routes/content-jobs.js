@@ -19,9 +19,19 @@ contentJobsRouter.get("/", async (request, response, next) => {
 
 contentJobsRouter.post("/", async (request, response, next) => {
   try {
+    const orchestratorClient = request.app.locals.aiOrchestratorClient;
+    if (!orchestratorClient) {
+      response.status(503).json({
+        code: "ORCHESTRATOR_UNAVAILABLE",
+        message: "AI 编排服务未配置，无法创建批量任务",
+        data: null,
+      });
+      return;
+    }
+
     const service = createContentJobService({
       repository: request.app.locals.contentJobsRepository,
-      orchestratorClient: request.app.locals.aiOrchestratorClient,
+      orchestratorClient,
     });
     const result = await service.createJob(request.body || {});
     response.status(202).json({
@@ -30,6 +40,14 @@ contentJobsRouter.post("/", async (request, response, next) => {
       data: result,
     });
   } catch (error) {
+    if (/batch id|content type/i.test(error.message || "")) {
+      response.status(400).json({
+        code: "INVALID_PARAM",
+        message: error.message,
+        data: null,
+      });
+      return;
+    }
     next(error);
   }
 });

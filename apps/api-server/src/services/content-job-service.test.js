@@ -31,7 +31,11 @@ test("create content job expands products into job items", async () => {
       return { status: "queued" };
     },
   };
-  const service = createContentJobService({ repository, orchestratorClient });
+  const service = createContentJobService({
+    repository,
+    orchestratorClient,
+    concurrency: 1,
+  });
 
   const result = await service.createJob({
     batchId: "ib_001",
@@ -40,54 +44,37 @@ test("create content job expands products into job items", async () => {
 
   assert.equal(result.jobId, "job_001");
   assert.equal(result.itemCount, 2);
-  assert.deepEqual(repositoryCalls, [
-    {
-      type: "job",
-      input: {
+  assert.equal(result.dispatchErrorCount, 0);
+  assert.deepEqual(
+    repositoryCalls.filter((item) => item.type !== "dispatch"),
+    [
+      {
+        type: "job",
+        input: {
+          batchId: "ib_001",
+          contentTypes: ["marketing_copy", "image_prompt"],
+        },
+      },
+      {
+        type: "products",
         batchId: "ib_001",
-        contentTypes: ["marketing_copy", "image_prompt"],
       },
-    },
-    {
-      type: "products",
-      batchId: "ib_001",
-    },
-    {
-      type: "items",
-      items: [
-        { jobId: "job_001", productId: "p_001", status: "pending" },
-        { jobId: "job_001", productId: "p_002", status: "pending" },
-      ],
-    },
-    {
-      type: "dispatch",
-      item: {
-        jobItemId: "item_001",
-        jobId: "job_001",
-        productId: "p_001",
-        contentTypes: ["marketing_copy", "image_prompt"],
-        productSnapshot: {
-          id: "p_001",
-          name: "Item A",
-          sellingPoint: "Point A",
-        },
+      {
+        type: "items",
+        items: [
+          { jobId: "job_001", productId: "p_001", status: "pending" },
+          { jobId: "job_001", productId: "p_002", status: "pending" },
+        ],
       },
-    },
-    {
-      type: "dispatch",
-      item: {
-        jobItemId: "item_002",
-        jobId: "job_001",
-        productId: "p_002",
-        contentTypes: ["marketing_copy", "image_prompt"],
-        productSnapshot: {
-          id: "p_002",
-          name: "Item B",
-          sellingPoint: "Point B",
-        },
-      },
-    },
-  ]);
+    ],
+  );
+  assert.deepEqual(
+    repositoryCalls
+      .filter((item) => item.type === "dispatch")
+      .map((item) => item.item.jobItemId)
+      .sort(),
+    ["item_001", "item_002"],
+  );
 });
 
 test("create content job rejects empty batch id", async () => {
@@ -115,4 +102,80 @@ test("create content job rejects empty batch id", async () => {
       }),
     /batch id/i,
   );
+});
+
+test("create content job rejects empty content types", async () => {
+  const service = createContentJobService({
+    repository: {
+      async createJob() {
+        throw new Error("should not be called");
+      },
+      async listProductsByBatchId() {
+        throw new Error("should not be called");
+      },
+      async createJobItems() {
+        throw new Error("should not be called");
+      },
+    },
+    orchestratorClient: { submitBatchItem: async () => {} },
+  });
+
+  await assert.rejects(
+    () =>
+      service.createJob({
+        batchId: "ib_001",
+        contentTypes: [],
+      }),
+    /content type/i,
+  );
+});
+
+test("create content job isolates dispatch failures", async () => {
+  const failedItems = [];
+  const repository = {
+    async createJob() {
+      return { id: "job_001" };
+    },
+    async listProductsByBatchId() {
+      return [
+        { id: "p_001", name: "Item A" },
+        { id: "p_002", name: "Item B" },
+      ];
+    },
+    async createJobItems(items) {
+      return [
+        { id: "item_001", ...items[0] },
+        { id: "item_002", ...items[1] },
+      ];
+    },
+    async updateJobItemResult(input) {
+      failedItems.push(input);
+      return input;
+    },
+  };
+  let callCount = 0;
+  const service = createContentJobService({
+    repository,
+    orchestratorClient: {
+      async submitBatchItem() {
+        callCount += 1;
+        if (callCount === 1) {
+          throw new Error("orchestrator down");
+        }
+        return { status: "queued" };
+      },
+    },
+    concurrency: 1,
+  });
+
+  const result = await service.createJob({
+    batchId: "ib_001",
+    contentTypes: ["marketing_copy"],
+  });
+
+  assert.equal(result.itemCount, 2);
+  assert.equal(result.dispatchErrorCount, 1);
+  assert.equal(failedItems.length, 1);
+  assert.equal(failedItems[0].status, "failed");
+  assert.equal(failedItems[0].resultSummary.errorCode, "DISPATCH_FAILED");
 });
