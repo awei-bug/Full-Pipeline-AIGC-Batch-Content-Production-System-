@@ -117,8 +117,8 @@ LangGraph 四节点（调研、撰写、润色、审核）、工具调用、批�
 
 这是可运行的 MVP，不是完整商业平台。当前仍未完成：
 
-- **权限矩阵**（登录与身份已具备，但"谁能做什么"尚未细分；见下节）
-- 团队空间（`project_members` 表与 owner 归属已通，邀请/移除成员接口未做）
+- **全局管理员与跨项目角色**（项目级权限矩阵已具备，见下节；平台级 admin 未做）
+- SSO
 - 多渠道自动发布
 - Text2SQL 商品数据库联动
 - 稳定生产级视频生成链路
@@ -163,12 +163,48 @@ $env:AUTH_SECRET="至少16位的随机字符串"   # 不配置则登录接口 fa
 - **`operator_type='system'` 的审计记录，`operator_id` 也记 `system`**：此前写死
   `user_demo`，会把系统状态流转误记成用户操作，审计时无法区分谁触发的。
 
-未做（明确留白）：refresh token / 会话吊销、角色权限矩阵、SSO。这些都需要持久化
-会话与并发控制，不宜在补身份这一步顺手加。
+未做（明确留白）：refresh token / 会话吊销、SSO、平台级全局管理员。这些都需要
+持久化会话与并发控制，不宜在补身份这一步顺手加。
 
 内存模式注意：未配 `DATABASE_URL` 时用户存在进程内存里，**重启即丢失**。
 真实多用户必须配 PostgreSQL（用户表 schema 见 `infra/sql/001_init_core_schema.sql`，
 密码存新增的 `content_platform.user_credentials`，不改动既有 users 表）。
+
+## 项目级权限
+
+身份层解决"请求是谁"，这一层解决"他能做什么"。数据单元是 `project`——商品、内容
+任务、作品、额度都挂在项目下，因此角色是**项目级**而非全局：一个人可以是 A 项目的
+美术、B 项目的只读。
+
+角色（存 `project_members.role_code`，schema 里本来就有的字段）：
+
+| 角色 | 权限 |
+| --- | --- |
+| `owner` | 全部，含成员管理与发布 |
+| `editor` | 读写项目内容与素材；**不能**管成员、删项目、发布 |
+| `viewer` | 只读 |
+
+要点：
+
+- 路由检查的是**权限点**（`project:write`、`member:write`…）而不是角色名，
+  将来加角色只改矩阵表，不用在路由里加 `if`。
+- 发布（`content:publish`）只给 owner：它是对外动作，误操作代价比普通写操作高一个量级。
+- **未知角色一律拒绝**而不是放行——`role_code` 来自外部输入，放行等于把拼写错误
+  变成提权漏洞。
+- 两条防线：**不能降级/移除最后一位 owner**（否则项目失去管理者，只能改库救）、
+  **不能降级或移除自己**（自杀式操作且无补偿路径）。换 owner 请先提升他人再降自己。
+- 非成员访问返回 **404 而不是 403**：403 等于告诉对方"这个项目存在但你没权限"，
+  可用于枚举项目 id。
+
+接口：
+
+- `GET    /api/projects/roles` — 角色与权限点清单（前后端共用同一份枚举）
+- `GET    /api/projects/:projectId/members`
+- `PUT    /api/projects/:projectId/members/:userId` `{roleCode}`
+- `DELETE /api/projects/:projectId/members/:userId`
+
+`AUTH_MODE=off` 时权限检查放行并标记 `bypass`——本地单用户演示里"权限"没有意义，
+强加检查只会破坏既有使用方式。
 
 四项生产级增强层也已在 `apps/ai-orchestrator/app/` 落地：
 - `evaluation/`：确定性多维评测 + 提示词自优化闭环（`PROMPT_OPT_ENABLED=1` 开启自优化）

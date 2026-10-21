@@ -25,6 +25,7 @@ import { createPool, hasDatabaseConfig } from "./lib/database.js";
 import { createAiOrchestratorClient, hasAiOrchestratorConfig } from "./lib/ai-orchestrator-client.js";
 import { ipContentRouter } from "./routes/ip-content.js";
 import { authRouter } from "./routes/auth.js";
+import { membersRouter } from "./routes/members.js";
 import { createIdentityMiddleware } from "./lib/identity.js";
 import { verifyToken } from "./lib/local-auth.js";
 import { createUsersRepository } from "./repositories/users-repository.js";
@@ -129,6 +130,10 @@ export async function buildApp({ env = process.env } = {}) {
 
   app.use("/api/auth", authRouter);
   app.use("/api/projects", projectsRouter);
+  // 成员与角色管理挂在 /api/projects 之下，路径与资源层级一致
+  // （/api/projects/:projectId/members）。角色清单是 /api/projects/roles，
+  // 必须在 /api/projects/:id 之类的前缀路由之前注册，因此单独挂在这里。
+  app.use("/api/projects", membersRouter);
   app.use("/api/import-batches", importBatchesRouter);
   app.use("/api/products", productsRouter);
   app.use("/api/content-jobs", contentJobsRouter);

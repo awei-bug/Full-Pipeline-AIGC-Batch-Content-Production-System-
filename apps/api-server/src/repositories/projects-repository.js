@@ -42,7 +42,54 @@ function mapProjectRow(row) {
 export class MemoryProjectsRepository {
   constructor() {
     this.items = [];
+    // project_id -> Map(user_id -> role_code)。与 project_members 表同构。
+    this.members = new Map();
     this.mode = "memory";
+  }
+
+  async findMemberRole(projectId, userId) {
+    const project = this.members.get(String(projectId));
+    if (!project) return null;
+    return project.get(String(userId)) || null;
+  }
+
+  /**
+   * 加/改成员。仅 owner 能调用（路由层已用 requireProjectPermission 校验）。
+   * 不允许通过此接口改掉最后一个 owner 的角色——那会让项目失去管理者。
+   */
+  async upsertMember({ projectId, userId, roleCode }) {
+    const project = this.members.get(String(projectId)) || new Map();
+    project.set(String(userId), String(roleCode));
+    this.members.set(String(projectId), project);
+    return { projectId: String(projectId), userId: String(userId), roleCode: String(roleCode) };
+  }
+
+  async removeMember({ projectId, userId }) {
+    const project = this.members.get(String(projectId));
+    if (!project) return false;
+    return project.delete(String(userId));
+  }
+
+  async memberCount(projectId, roleCode = null) {
+    const project = this.members.get(String(projectId));
+    if (!project) return 0;
+    if (!roleCode) return project.size;
+    let count = 0;
+    for (const value of project.values()) {
+      if (value === roleCode) count += 1;
+    }
+    return count;
+  }
+
+  async listMembers(projectId) {
+    const project = this.members.get(String(projectId));
+    if (!project) return [];
+    return [...project.entries()].map(([userId, roleCode]) => ({
+      projectId: String(projectId),
+      userId,
+      roleCode,
+      status: "active",
+    }));
   }
 
   async list({ ownerUserId = null } = {}) {
@@ -67,6 +114,13 @@ export class MemoryProjectsRepository {
       updatedAt: now,
     };
     this.items.push(project);
+    // 创建者同时是 owner 成员，与 Postgres 实现写入 project_members 的行为对齐。
+    // 不建这条记录会让 memory 模式下 owner 无法通过权限检查（查不到角色）。
+    await this.upsertMember({
+      projectId: project.id,
+      userId: project.ownerUserId,
+      roleCode: "owner",
+    });
     return project;
   }
 }
@@ -75,6 +129,70 @@ export class PostgresProjectsRepository {
   constructor(pool) {
     this.pool = pool;
     this.mode = "postgres";
+  }
+
+  async findMemberRole(projectId, userId) {
+    const result = await this.pool.query(
+      `select role_code
+         from content_platform.project_members
+        where project_id = $1 and user_id = $2 and status = 'active'
+        limit 1`,
+      [String(projectId), String(userId)],
+    );
+    return result.rows[0]?.role_code || null;
+  }
+
+  async upsertMember({ projectId, userId, roleCode }) {
+    await this.pool.query(
+      `insert into content_platform.project_members(id, project_id, user_id, role_code, status)
+       values ($1, $2, $3, $4, 'active')
+       on conflict (project_id, user_id)
+       do update set role_code = excluded.role_code, status = 'active', updated_at = now()`,
+      [`pm_${crypto.randomUUID()}`, String(projectId), String(userId), String(roleCode)],
+    );
+    return { projectId: String(projectId), userId: String(userId), roleCode: String(roleCode) };
+  }
+
+  async removeMember({ projectId, userId }) {
+    const result = await this.pool.query(
+      `delete from content_platform.project_members
+        where project_id = $1 and user_id = $2`,
+      [String(projectId), String(userId)],
+    );
+    return result.rowCount > 0;
+  }
+
+  async memberCount(projectId, roleCode = null) {
+    const params = [String(projectId)];
+    let extra = "";
+    if (roleCode) {
+      params.push(String(roleCode));
+      extra = "and role_code = $2";
+    }
+    const result = await this.pool.query(
+      `select count(*)::int as total
+         from content_platform.project_members
+        where project_id = $1 and status = 'active' ${extra}`,
+      params,
+    );
+    return result.rows[0]?.total || 0;
+  }
+
+  async listMembers(projectId) {
+    const result = await this.pool.query(
+      `select project_id, user_id, role_code, status, joined_at
+         from content_platform.project_members
+        where project_id = $1 and status = 'active'
+        order by joined_at asc`,
+      [String(projectId)],
+    );
+    return result.rows.map((row) => ({
+      projectId: row.project_id,
+      userId: row.user_id,
+      roleCode: row.role_code,
+      status: row.status,
+      joinedAt: row.joined_at,
+    }));
   }
 
   async list({ ownerUserId = null } = {}) {
