@@ -165,26 +165,24 @@ export function highestRole(roleCodes) {
 /**
  * 平台级守卫：资源没有项目维度时使用。
  *
- * 适用对象：`import_batches` / `content_jobs` / `products` / AI 对话 / data-hub 同步。
- * 这些表没有 `project_id`，无法做项目级隔离。
- *
  * 角色从哪来（**服务端权威**）
  * --------------------------
- * 早期版本读请求头 `X-Content-Role`，那是前端自述——虽然篡改的后果只是"多显示几个
- * 按钮"，但它确实是权限体系里唯一还"前端说了算"的地方。
+ * 查 `project_members` 得到该用户在所有项目里的角色，取**最高**的一个作为
+ * 平台级角色。前端无法声明。
  *
- * 现在改为：查 `project_members` 得到该用户在所有项目里的角色，取**最高**的一个作为
- * 平台级角色。这样平台级角色的判定完全在服务端，前端无法声明。
+ * `allowUnscoped` 参数
+ * -------------------
+ * 有些平台级动作必须允许"还不属于任何项目"的新用户执行，否则新用户第一次
+ * 使用就寸步难行。目前只有 `platform:import` 用它：
  *
- * 为什么取最高而不是要求"必须有某个平台级角色"
- * ------------------------------------------
- * 项目角色是项目级概念，平台级动作需要一个折算规则。取最高是唯一不引入新概念的
- * 做法（不必新增"平台管理员"表与生命周期管理）。代价是：任一项目的 owner 都能做
- * 平台级写操作——在当前的"批次/任务是全局共享资源"事实下，这与数据模型是一致的。
+ * - 允许：导入到"未分配"批次（projectId 为 null），之后可以再归入项目。
+ * - 不允许：生成、对话、发布——这些要么产生真金白银的费用，要么对外可见，
+ *   不该让一个没有项目归属的账号随便做。
  *
- * 一个用户不属于任何项目时，平台级角色为 null → 按 viewer 拒绝写操作。
+ * 这是一个刻意的产品判断，不是技术妥协：导入是"把自己的数据带进来"，
+ * 风险局限在调用者自己；生成与发布则会产生外部成本与外部影响。
  */
-export function requirePlatformPermission({ action }) {
+export function requirePlatformPermission({ action, allowUnscoped = false }) {
   return async function platformPermissionGuard(request, response, next) {
     try {
       const authMode = request.identityMode || "off";
@@ -207,23 +205,33 @@ export function requirePlatformPermission({ action }) {
       const memberships = repository?.listRolesForUser
         ? await repository.listRolesForUser(identity.userId)
         : [];
-      const roleCode = highestRole(memberships.map((item) => item.roleCode));
+      const resolvedRole = highestRole(memberships.map((item) => item.roleCode));
 
-      // 不属于任何项目的已登录用户：只能读，不能做平台级写操作。
-      const effectiveRole = roleCode || ROLES.viewer;
-      const verdict = can(effectiveRole, action);
-      request.access = {
-        ...verdict,
-        roleCode: effectiveRole,
-        resolvedFrom: roleCode ? "project_members" : "default_viewer",
-      };
+      // 不属于任何项目：按 allowUnscoped 决定是否放行。
+      if (!resolvedRole) {
+        if (allowUnscoped) {
+          request.access = {
+            allowed: true,
+            roleCode: null,
+            unscoped: true,
+            reason: "无项目归属，按平台级豁免放行（仅写入未分配资源）",
+          };
+          return next();
+        }
+        return response.status(403).json({
+          code: "FORBIDDEN",
+          message: "你还不是任何项目的成员，无法执行写操作",
+          data: null,
+        });
+      }
+
+      const verdict = can(resolvedRole, action);
+      request.access = { ...verdict, roleCode: resolvedRole, resolvedFrom: "project_members" };
 
       if (!verdict.allowed) {
         return response.status(403).json({
           code: "FORBIDDEN",
-          message: roleCode
-            ? "当前角色无权执行该操作（平台级）"
-            : "你还不是任何项目的成员，无法执行写操作",
+          message: "当前角色无权执行该操作（平台级）",
           data: null,
         });
       }

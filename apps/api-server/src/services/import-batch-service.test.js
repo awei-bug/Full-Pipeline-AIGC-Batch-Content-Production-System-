@@ -25,12 +25,16 @@ test("create import batch persists batch metadata and product rows", async () =>
 
   assert.equal(result.batchId, "ib_001");
   assert.equal(result.productCount, 1);
+  assert.equal(result.projectId, null);
   assert.deepEqual(repositoryCalls, [
     {
       type: "batch",
       input: {
         fileName: "products.csv",
         fieldMapping: { name: "title", price: "sale_price" },
+        // 未传 projectId 时显式记为 null（未分配），而不是省略字段——
+        // 省略会让"没传"和"传了空"在后端难以区分。
+        projectId: null,
       },
     },
     {

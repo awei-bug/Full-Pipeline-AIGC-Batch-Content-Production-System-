@@ -12,7 +12,12 @@ export function createImportBatchService({ repository }) {
   }
 
   return {
-    async createBatch({ fileName, fieldMapping, rows }) {
+    /**
+     * @param {object} input
+     * @param {string|null} input.projectId 批次归属项目；为空表示未分配。
+     *   权限校验由路由层负责（它知道请求身份），这里只做归属记录。
+     */
+    async createBatch({ fileName, fieldMapping, rows, projectId = null }) {
       if (!Array.isArray(rows) || rows.length === 0) {
         throw new Error("Import rows are required");
       }
@@ -20,6 +25,7 @@ export function createImportBatchService({ repository }) {
       const batch = await repository.createImportBatch({
         fileName,
         fieldMapping,
+        projectId,
       });
 
       const productRows = (rows || []).map((row, index) => ({
@@ -34,6 +40,7 @@ export function createImportBatchService({ repository }) {
       return {
         batchId: batch.id,
         productCount: productRows.length,
+        projectId: batch.projectId || null,
       };
     },
   };
