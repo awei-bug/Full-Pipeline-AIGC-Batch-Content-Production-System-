@@ -864,9 +864,12 @@ export function App() {
               />
               <div className="workflow-copy-composer-actions">
                 <span>{workflowCopyInput.length} 字</span>
-                <button className="primary-button workflow-copy-submit" type="submit" disabled={!workflowCopyInput.trim() || isGeneratingWorkflowCopy}>
-                  {isGeneratingWorkflowCopy ? "正在生成…" : workflowCopyDraft ? "按要求修改文案" : "生成宣传文案"}
-                </button>
+                {/* 文案生成走 /api/chat，后端要求 platform:ai_chat。 */}
+                <PermissionGate permissions={session.permissions} action={ACTIONS.PLATFORM_AI_CHAT}>
+                  <button className="primary-button workflow-copy-submit" type="submit" disabled={!workflowCopyInput.trim() || isGeneratingWorkflowCopy}>
+                    {isGeneratingWorkflowCopy ? "正在生成…" : workflowCopyDraft ? "按要求修改文案" : "生成宣传文案"}
+                  </button>
+                </PermissionGate>
               </div>
             </form>
 
@@ -942,9 +945,13 @@ export function App() {
                 ) : null}
               </div>
 
-              <button className="primary-button workflow-run-button" type="submit" disabled={!workflowCopyDraft.trim() || isStartingWorkflow || isRunning}>
-                <span>{isStartingWorkflow ? "正在启动…" : isRunning ? "素材生成中…" : !workflowCopyDraft.trim() ? "请先生成宣传文案" : workflowOutputMode === "image" ? "根据文案生成图片" : workflowOutputMode === "video" ? "根据文案生成视频" : "根据文案生成图片和视频"}</span><b>→</b>
-              </button>
+              {/* 启动工作流对应后端 platform:generate，viewer 会被 403 拦住，
+                  这里提前隐藏并说明原因。 */}
+              <PermissionGate permissions={session.permissions} action={ACTIONS.PLATFORM_GENERATE}>
+                <button className="primary-button workflow-run-button" type="submit" disabled={!workflowCopyDraft.trim() || isStartingWorkflow || isRunning}>
+                  <span>{isStartingWorkflow ? "正在启动…" : isRunning ? "素材生成中…" : !workflowCopyDraft.trim() ? "请先生成宣传文案" : workflowOutputMode === "image" ? "根据文案生成图片" : workflowOutputMode === "video" ? "根据文案生成视频" : "根据文案生成图片和视频"}</span><b>→</b>
+                </button>
+              </PermissionGate>
             </form>
 
             <div className="workflow-progress-head">

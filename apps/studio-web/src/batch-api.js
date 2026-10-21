@@ -1,6 +1,6 @@
 import * as XLSX from "xlsx";
 
-import { readToken, clearSession } from "./session.js";
+import { authHeaders, clearSession } from "./session.js";
 
 const apiBaseUrl =
   (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_BASE_URL) ||
@@ -18,18 +18,16 @@ const DEFAULT_EXPORT_FILE_NAME = "外贸内容结果.xlsx";
  * - 403 = 已登录但角色不足 → **绝不能清 token**，否则用户会莫名其妙被登出，
  *   而且再登录一次结果一样，问题定位会跑偏。
  *
- * `AUTH_MODE=off` 时后端忽略这个头，前端也可以在无 token 时正常请求，
+ * `AUTH_MODE=off` 时后端忽略这些头，前端也可以在无 token 时正常请求，
  * 所以这里不做"没有 token 就不发请求"的前置拦截。
  */
 async function request(path, options = {}) {
-  const token = readToken();
   const response = await fetch(`${apiBaseUrl}${path}`, {
     ...options,
-    headers: {
+    headers: authHeaders({
       "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(options.headers || {}),
-    },
+    }),
   });
 
   const payload = await response.json();
@@ -52,13 +50,9 @@ async function request(path, options = {}) {
 }
 
 async function requestBlob(path, options = {}) {
-  const token = readToken();
   const response = await fetch(`${apiBaseUrl}${path}`, {
     ...(options || {}),
-    headers: {
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...((options && options.headers) || {}),
-    },
+    headers: authHeaders((options && options.headers) || {}),
   });
 
   if (response.status === 401) {

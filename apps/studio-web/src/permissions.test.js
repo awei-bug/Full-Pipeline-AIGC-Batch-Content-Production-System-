@@ -27,6 +27,7 @@ import {
 } from "./permissions.js";
 import {
   clearSession,
+  authHeaders,
   detectAuthMode,
   readRoleCode,
   readToken,
@@ -202,4 +203,43 @@ test("detectAuthMode 网络失败回落 off（不让抖动变成要求登录）"
     throw new Error("network down");
   };
   assert.equal(await detectAuthMode("http://x", failingFetch), "off");
+});
+
+/* --------------------------------------------- 请求头（平台级守卫依赖它） */
+
+test("authHeaders 带上 token 与角色头", () => {
+  const restore = installFakeStorage();
+  try {
+    saveSession({ token: "tok_xyz", roleCode: "editor" });
+    const headers = authHeaders();
+    assert.equal(headers.Authorization, "Bearer tok_xyz");
+    // 不带这个头后端会把已登录用户当 viewer，所有平台级写操作都会被 403
+    assert.equal(headers["X-Content-Role"], "editor");
+  } finally {
+    restore();
+  }
+});
+
+test("authHeaders 在无会话时不产生空头", () => {
+  const restore = installFakeStorage();
+  try {
+    clearSession();
+    const headers = authHeaders();
+    assert.equal("Authorization" in headers, false);
+    assert.equal("X-Content-Role" in headers, false);
+  } finally {
+    restore();
+  }
+});
+
+test("authHeaders 保留调用方传入的额外头", () => {
+  const restore = installFakeStorage();
+  try {
+    saveSession({ token: "t", roleCode: "owner" });
+    const headers = authHeaders({ "Content-Type": "application/json" });
+    assert.equal(headers["Content-Type"], "application/json");
+    assert.equal(headers.Authorization, "Bearer t");
+  } finally {
+    restore();
+  }
 });

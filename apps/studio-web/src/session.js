@@ -52,6 +52,27 @@ export function readRoleCode() {
   }
 }
 
+/**
+ * 构造带鉴权与角色声明的请求头。
+ *
+ * `X-Content-Role` 是后端平台级守卫识别角色的依据（见 lib/permissions.js 的
+ * requirePlatformPermission）。**不带这个头，后端会把已登录用户一律当成 viewer**，
+ * 于是所有平台级写操作都会被 403——前端看起来"登录了却什么都不能做"。
+ *
+ * 注意这是前端自述的角色，后端仍然只信自己那套判定：真正的项目级校验走
+ * project_members 表，平台级校验用这个头。它被篡改的后果是"能多显示几个按钮"，
+ * 而真正写操作仍受后端约束（这是当前设计的已知边界，见 README）。
+ */
+export function authHeaders(extra = {}) {
+  const token = readToken();
+  const role = readRoleCode();
+  return {
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(role ? { "X-Content-Role": role } : {}),
+    ...extra,
+  };
+}
+
 export function saveSession({ token, roleCode }) {
   const store = storage();
   if (!store) return;
