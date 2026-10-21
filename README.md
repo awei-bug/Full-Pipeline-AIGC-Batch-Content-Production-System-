@@ -206,6 +206,38 @@ $env:AUTH_SECRET="至少16位的随机字符串"   # 不配置则登录接口 fa
 `AUTH_MODE=off` 时权限检查放行并标记 `bypass`——本地单用户演示里"权限"没有意义，
 强加检查只会破坏既有使用方式。
 
+## 前端权限显示
+
+后端能正确拒绝越权，但前端如果还把所有按钮给所有人看，用户点了才吃 403 ——体验差，
+而且会让人误以为权限没生效。因此前端也接入了一层：
+
+| 文件 | 职责 |
+| --- | --- |
+| `src/permissions.js` | 与后端同一套权限点矩阵 |
+| `src/session.js` | token 存取、登录/注册、探测后端 `authMode` |
+| `src/PermissionGate.jsx` | `<PermissionGate>` 组件、`<AuthPanel>` 登录面板、`usePermissionSession` hook |
+
+**前端矩阵只用于隐藏按钮，不是安全边界。** 后端才是唯一权威。两份矩阵不一致时，
+最坏结果是多显示或少显示一个按钮，不会造成越权。为了让不一致尽快暴露，
+`permissions.test.js` 用与后端相同的边界用例（editor 不能管成员、viewer 不能写等）。
+
+行为：
+
+- 后端 `authMode=off` → 前端不显示登录界面，所有权限检查放行，界面与改造前一致。
+- `local`/`strict` → 顶栏出现「登录」，登录后按项目角色显示可执行操作；
+  无权限时**显示原因**（如"只有项目 owner 可以发布"），而不是给一个不说话的灰按钮。
+- `api-server` 的 `/api/health` 新增 `authMode` 字段，前端靠它判断要不要显示登录
+  界面。不让前端自己读环境变量：构建产物与后端配置可能不同步，问后端才准。
+
+两个实现取舍：
+
+- **token 存 localStorage**（而非 sessionStorage）：这是明确的安全妥协。理想是
+  HttpOnly Cookie + CSRF 防护，但需要后端同时改造会话与跨域配置。代价是 XSS 可读
+  token，收益是刷新不用重登。用较短的 token 有效期（12 小时）限缩窗口。
+- **401 与 403 分开处理**：401 清 token 提示重登；403 绝不进 token 清理分支——
+  否则用户会莫名其妙被登出，再登一次结果一样，问题定位会跑偏。
+- **`/api/health` 探测失败一律回落 `off`**：网络抖动不该让用户突然看到"要求登录"。
+
 四项生产级增强层也已在 `apps/ai-orchestrator/app/` 落地：
 - `evaluation/`：确定性多维评测 + 提示词自优化闭环（`PROMPT_OPT_ENABLED=1` 开启自优化）
 - `safety/`：内容安全双层审核（规则层始终开启，LLM 层 `SAFETY_LLM_ENABLED=1` 开启）

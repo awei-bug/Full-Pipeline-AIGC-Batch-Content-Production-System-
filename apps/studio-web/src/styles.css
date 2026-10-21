@@ -3680,3 +3680,113 @@ input[type="checkbox"] {
   color: var(--text);
 }
 .ip-trace-arrow { color: var(--brand-500); margin: 0 4px; }
+
+/* ------------------------------------------- 14 会话与权限（登录面板 / 权限提示） */
+/* 全部复用既有令牌，不写死颜色值；深色模式由 :root 令牌覆盖自动生效。 */
+
+.auth-panel {
+  margin: 0 0 18px;
+  padding: 18px 20px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.auth-tabs {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  margin-bottom: 14px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-inset);
+}
+
+.auth-tabs button {
+  padding: 6px 18px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.auth-tabs button.is-active {
+  background: var(--surface);
+  color: var(--brand-600);
+  box-shadow: var(--shadow-xs);
+}
+
+.auth-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 14px;
+}
+
+.auth-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 180px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.auth-form input {
+  padding: 9px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-xs);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+.auth-form input:focus-visible {
+  outline: 2px solid var(--brand-400);
+  outline-offset: 1px;
+}
+
+.auth-error {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--danger-ink);
+  font-size: 13px;
+}
+
+.auth-note {
+  margin: 12px 0 0;
+  font-size: 12px;
+  color: var(--ink-400);
+}
+
+.auth-note code {
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: var(--surface-inset);
+  font-size: 12px;
+}
+
+/* 权限不足时的说明文案：给原因，而不是给一个不说话的灰按钮 */
+.permission-hint {
+  margin: 0;
+  padding: 8px 12px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-xs);
+  background: var(--surface-3);
+  color: var(--ink-400);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.permission-disabled {
+  display: inline-flex;
+}
+
+.session-signout,
+.session-signin {
+  padding: 6px 14px;
+  font-size: 12px;
+}

@@ -23,6 +23,8 @@ import { deriveBatchWorkspaceView, shouldPollContentJob } from "./batch-view-mod
 import { EmptyCanvas, FlowNodes } from "./Illustrations.jsx";
 import { IPWorkspace } from "./IPWorkspace.jsx";
 import { getSystemTheme, setTheme as persistTheme } from "./theme.js";
+import { AuthPanel, PermissionGate, usePermissionSession } from "./PermissionGate.jsx";
+import { ACTIONS } from "./permissions.js";
 
 const defaultCsvText = [
   "产品名称,核心卖点,报价/MOQ,品类,目标市场,应用场景",
@@ -216,6 +218,10 @@ export function App() {
   const [expandedResultIds, setExpandedResultIds] = useState([]);
   const [workspaceMode, setWorkspaceMode] = useState("ip");
   const [theme, setThemeState] = useState(() => document.documentElement.dataset.theme || getSystemTheme());
+  // 会话与权限：探测后端 authMode，AUTH_MODE=off 时 permissions.bypass=true，
+  // 所有权限检查放行，界面与改造前完全一致。
+  const session = usePermissionSession(apiBaseUrl);
+  const [authPanelOpen, setAuthPanelOpen] = useState(false);
   const [workflowCopyInput, setWorkflowCopyInput] = useState(initialWorkflowBrief);
   const [workflowCopyMessages, setWorkflowCopyMessages] = useState([
     {
@@ -992,6 +998,26 @@ export function App() {
           <div className="topbar-status" aria-label="当前状态">
             {workspaceMode === "ip" ? <span className="model-pill">工作流 <strong>4 个 Agent</strong></span> : <span className="model-pill">文本模型 <strong>agnes-2.5-flash</strong></span>}
             {workspaceMode !== "ip" && <span className="system-status topbar-live">● 服务在线</span>}
+            {session.authMode !== "off" ? (
+              session.token ? (
+                <button
+                  type="button"
+                  className="secondary-button session-signout"
+                  onClick={session.signOut}
+                  title={`角色：${session.roleCode || "无项目角色"}`}
+                >
+                  退出（{session.roleCode || "无角色"}）
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="secondary-button session-signin"
+                  onClick={() => setAuthPanelOpen((open) => !open)}
+                >
+                  {authPanelOpen ? "收起登录" : "登录"}
+                </button>
+              )
+            ) : null}
             <button
               type="button"
               className="theme-toggle"
@@ -1003,6 +1029,17 @@ export function App() {
             </button>
           </div>
         </header>
+
+        {authPanelOpen && session.authMode !== "off" && !session.token ? (
+          <AuthPanel
+            apiBaseUrl={apiBaseUrl}
+            authMode={session.authMode}
+            onAuthenticated={() => {
+              setAuthPanelOpen(false);
+              setSuccessMessage("已登录");
+            }}
+          />
+        ) : null}
 
         {packPanelOpen && packPreview ? (
           <div className="pack-overlay" role="dialog" aria-modal="true">
@@ -1107,19 +1144,23 @@ export function App() {
                 >
                   下载成品包
                 </button>
-                <button
-                  className="primary-button"
-                  type="button"
-                  disabled={isPacking || !commercePush.configured}
-                  title={
-                    commercePush.configured
-                      ? `推送到 ${commercePush.tenantSlug}`
-                      : "未配置商城直推参数"
-                  }
-                  onClick={handlePushToCommerce}
-                >
-                  {isPacking ? "正在推送" : "推送到商城"}
-                </button>
+                {/* 推送到商城是对外动作，后端只允许 owner（content:publish）。
+                    这里提前隐藏，避免非 owner 点了才吃 403。 */}
+                <PermissionGate permissions={session.permissions} action={ACTIONS.CONTENT_PUBLISH}>
+                  <button
+                    className="primary-button"
+                    type="button"
+                    disabled={isPacking || !commercePush.configured}
+                    title={
+                      commercePush.configured
+                        ? `推送到 ${commercePush.tenantSlug}`
+                        : "未配置商城直推参数"
+                    }
+                    onClick={handlePushToCommerce}
+                  >
+                    {isPacking ? "正在推送" : "推送到商城"}
+                  </button>
+                </PermissionGate>
               </div>
 
               {!commercePush.configured ? (

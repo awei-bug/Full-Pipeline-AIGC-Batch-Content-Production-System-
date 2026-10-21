@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "node --test src/permissions.test.js src/batch-api.test.js src/batch-view-model.test.js src/capabilities.test.js"
   },
   "dependencies": {
     "react": "^18.3.1",

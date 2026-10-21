@@ -1,5 +1,7 @@
 import * as XLSX from "xlsx";
 
+import { readToken, clearSession } from "./session.js";
+
 const apiBaseUrl =
   (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_BASE_URL) ||
   "http://127.0.0.1:3100";
@@ -8,27 +10,60 @@ export { apiBaseUrl };
 
 const DEFAULT_EXPORT_FILE_NAME = "外贸内容结果.xlsx";
 
+/**
+ * 带鉴权头的请求。
+ *
+ * 401 与 403 必须分开处理：
+ * - 401 = 未登录 / token 过期 → 清掉本地 token，提示重新登录；
+ * - 403 = 已登录但角色不足 → **绝不能清 token**，否则用户会莫名其妙被登出，
+ *   而且再登录一次结果一样，问题定位会跑偏。
+ *
+ * `AUTH_MODE=off` 时后端忽略这个头，前端也可以在无 token 时正常请求，
+ * 所以这里不做"没有 token 就不发请求"的前置拦截。
+ */
 async function request(path, options = {}) {
+  const token = readToken();
   const response = await fetch(`${apiBaseUrl}${path}`, {
+    ...options,
     headers: {
       "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(options.headers || {}),
     },
-    ...options,
   });
 
   const payload = await response.json();
+
+  if (response.status === 401) {
+    clearSession();
+    throw Object.assign(new Error(payload.message || "登录已失效，请重新登录"), {
+      statusCode: 401,
+      code: payload.code,
+    });
+  }
   if (!response.ok) {
-    throw new Error(payload.message || "请求失败");
+    throw Object.assign(new Error(payload.message || "请求失败"), {
+      statusCode: response.status,
+      code: payload.code,
+    });
   }
 
   return payload.data;
 }
 
 async function requestBlob(path, options = {}) {
+  const token = readToken();
   const response = await fetch(`${apiBaseUrl}${path}`, {
     ...(options || {}),
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...((options && options.headers) || {}),
+    },
   });
+
+  if (response.status === 401) {
+    clearSession();
+  }
 
   if (!response.ok) {
     let message = "请求失败";
@@ -38,7 +73,7 @@ async function requestBlob(path, options = {}) {
     } catch {
       // ignore invalid json body
     }
-    throw new Error(message);
+    throw Object.assign(new Error(message), { statusCode: response.status });
   }
 
   const blob = await response.blob();

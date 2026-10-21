@@ -26,7 +26,7 @@ import { createAiOrchestratorClient, hasAiOrchestratorConfig } from "./lib/ai-or
 import { ipContentRouter } from "./routes/ip-content.js";
 import { authRouter } from "./routes/auth.js";
 import { membersRouter } from "./routes/members.js";
-import { createIdentityMiddleware } from "./lib/identity.js";
+import { createIdentityMiddleware, resolveAuthMode } from "./lib/identity.js";
 import { verifyToken } from "./lib/local-auth.js";
 import { createUsersRepository } from "./repositories/users-repository.js";
 import { MemoryProjectsRepository, PostgresProjectsRepository } from "./repositories/projects-repository.js";
@@ -124,6 +124,9 @@ export async function buildApp({ env = process.env } = {}) {
         commercePushTenant: app.locals.commerceIntegrationClient?.target?.tenantSlug || null,
         dataHubConfigured: Boolean(dataHubClient),
         dataHubTarget: dataHubClient?.target?.baseUrl || null,
+        // 前端靠这个字段决定要不要显示登录界面。不让前端自己读环境变量：
+        // 构建产物与后端配置可能不同步，问后端才准。
+        authMode: resolveAuthMode(env),
       },
     });
   });
