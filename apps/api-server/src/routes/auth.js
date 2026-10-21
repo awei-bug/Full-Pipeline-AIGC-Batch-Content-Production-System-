@@ -9,6 +9,7 @@ import express from "express";
 
 import { signToken } from "../lib/local-auth.js";
 import { resolveAuthMode } from "../lib/identity.js";
+import { actionsForRole, highestRole } from "../lib/permissions.js";
 
 export const authRouter = express.Router();
 
@@ -160,6 +161,49 @@ authRouter.get("/me", async (request, response, next) => {
               tenantId: user.tenantId || null,
             }
           : null,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * 当前用户在各项目中的角色 + 折算出的平台级角色。
+ *
+ * 这个接口的存在是为了消除 `X-Content-Role` 那个"前端自述角色"的边界：
+ * 前端不再需要自己声明角色，问这个接口即可。后端守卫本身也走同一套查询
+ * （见 requirePlatformPermission），不依赖请求头。
+ *
+ * 返回 platformRole 是服务端折算的最高角色，前端只用于控制按钮显隐；
+ * 真正的判定仍在后端。
+ */
+authRouter.get("/me/projects", async (request, response, next) => {
+  try {
+    if (!requireEnabled(request, response)) return;
+    const identity = request.identity;
+    if (!identity || identity.kind === "anonymous") {
+      return fail(response, 401, "UNAUTHORIZED", "请先登录");
+    }
+
+    const projectsRepository = request.app.locals.projectsRepository;
+    const memberships = projectsRepository?.listRolesForUser
+      ? await projectsRepository.listRolesForUser(identity.userId)
+      : [];
+
+    const platformRole = highestRole(memberships.map((item) => item.roleCode));
+
+    response.json({
+      code: "SUCCESS",
+      message: "成功",
+      data: {
+        userId: identity.userId,
+        // 项目级角色：前端可据此在具体项目页面控制写操作
+        memberships,
+        // 平台级角色：服务端折算，前端不得自行声明
+        platformRole,
+        // 让前端知道当前账号能做什么，避免"点了才 403"
+        actions: platformRole ? actionsForRole(platformRole) : [],
       },
     });
   } catch (error) {

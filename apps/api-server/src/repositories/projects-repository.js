@@ -92,6 +92,22 @@ export class MemoryProjectsRepository {
     }));
   }
 
+  /**
+   * 用户在**所有项目**中的角色列表。平台级动作需要一个平台级角色，
+   * 但角色本身是项目级的，所以取"该用户在各项目里的角色"再由上层折算。
+   */
+  async listRolesForUser(userId) {
+    const target = String(userId);
+    const result = [];
+    for (const [projectId, members] of this.members.entries()) {
+      const roleCode = members.get(target);
+      if (roleCode) {
+        result.push({ projectId, roleCode, status: "active" });
+      }
+    }
+    return result;
+  }
+
   async list({ ownerUserId = null } = {}) {
     const scope = ownerUserId ? resolveOwner(ownerUserId) : null;
     return [...this.items]
@@ -192,6 +208,20 @@ export class PostgresProjectsRepository {
       roleCode: row.role_code,
       status: row.status,
       joinedAt: row.joined_at,
+    }));
+  }
+
+  async listRolesForUser(userId) {
+    const result = await this.pool.query(
+      `select project_id, role_code, status
+         from content_platform.project_members
+        where user_id = $1 and status = 'active'`,
+      [String(userId)],
+    );
+    return result.rows.map((row) => ({
+      projectId: row.project_id,
+      roleCode: row.role_code,
+      status: row.status,
     }));
   }
 

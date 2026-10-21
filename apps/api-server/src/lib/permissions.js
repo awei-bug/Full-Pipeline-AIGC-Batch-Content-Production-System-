@@ -141,56 +141,96 @@ export function evaluateAccess({ authMode, roleCode, action }) {
   return can(roleCode, action);
 }
 
+/** 角色强弱排序，用于折算"用户在多个项目中的最高角色"。 */
+const ROLE_RANK = {
+  [ROLES.viewer]: 1,
+  [ROLES.editor]: 2,
+  [ROLES.owner]: 3,
+};
+
+/**
+ * 从一组角色里取最高的那个。未知角色被忽略（不会因为脏数据升级）。
+ * @returns {string|null}
+ */
+export function highestRole(roleCodes) {
+  let best = null;
+  for (const code of roleCodes || []) {
+    const role = String(code || "").trim().toLowerCase();
+    if (!isKnownRole(role)) continue;
+    if (!best || ROLE_RANK[role] > ROLE_RANK[best]) best = role;
+  }
+  return best;
+}
+
 /**
  * 平台级守卫：资源没有项目维度时使用。
  *
  * 适用对象：`import_batches` / `content_jobs` / `products` / AI 对话 / data-hub 同步。
- * 这些表没有 `project_id`，无法做项目级隔离。判据是"身份存在且角色具备平台级权限点"。
+ * 这些表没有 `project_id`，无法做项目级隔离。
  *
- * 角色从哪来？平台级动作不绑定具体项目，但角色是项目级的概念。当前实现：
- * 取请求头 `X-Content-Role`（由前端在登录后、选定项目时带上），或退化为
- * 询问任一项目的成员角色。为保持简单与可预测，这里**只接受显式声明的角色**，
- * 不做"扫所有项目取最高角色"——那种隐式放宽很难审计。
+ * 角色从哪来（**服务端权威**）
+ * --------------------------
+ * 早期版本读请求头 `X-Content-Role`，那是前端自述——虽然篡改的后果只是"多显示几个
+ * 按钮"，但它确实是权限体系里唯一还"前端说了算"的地方。
  *
- * 没有角色的已登录用户按 `viewer` 处理（只能读），不会误放行写操作。
+ * 现在改为：查 `project_members` 得到该用户在所有项目里的角色，取**最高**的一个作为
+ * 平台级角色。这样平台级角色的判定完全在服务端，前端无法声明。
+ *
+ * 为什么取最高而不是要求"必须有某个平台级角色"
+ * ------------------------------------------
+ * 项目角色是项目级概念，平台级动作需要一个折算规则。取最高是唯一不引入新概念的
+ * 做法（不必新增"平台管理员"表与生命周期管理）。代价是：任一项目的 owner 都能做
+ * 平台级写操作——在当前的"批次/任务是全局共享资源"事实下，这与数据模型是一致的。
+ *
+ * 一个用户不属于任何项目时，平台级角色为 null → 按 viewer 拒绝写操作。
  */
 export function requirePlatformPermission({ action }) {
-  return function platformPermissionGuard(request, response, next) {
-    const authMode = request.identityMode || "off";
+  return async function platformPermissionGuard(request, response, next) {
+    try {
+      const authMode = request.identityMode || "off";
 
-    if (authMode === "off") {
-      request.access = { allowed: true, bypass: true, reason: "AUTH_MODE=off，本地演示模式放行" };
+      if (authMode === "off") {
+        request.access = { allowed: true, bypass: true, reason: "AUTH_MODE=off，本地演示模式放行" };
+        return next();
+      }
+
+      const identity = request.identity;
+      if (!identity || identity.kind === "anonymous") {
+        return response.status(401).json({
+          code: "UNAUTHORIZED",
+          message: "请先登录",
+          data: null,
+        });
+      }
+
+      const repository = request.app.locals.projectsRepository;
+      const memberships = repository?.listRolesForUser
+        ? await repository.listRolesForUser(identity.userId)
+        : [];
+      const roleCode = highestRole(memberships.map((item) => item.roleCode));
+
+      // 不属于任何项目的已登录用户：只能读，不能做平台级写操作。
+      const effectiveRole = roleCode || ROLES.viewer;
+      const verdict = can(effectiveRole, action);
+      request.access = {
+        ...verdict,
+        roleCode: effectiveRole,
+        resolvedFrom: roleCode ? "project_members" : "default_viewer",
+      };
+
+      if (!verdict.allowed) {
+        return response.status(403).json({
+          code: "FORBIDDEN",
+          message: roleCode
+            ? "当前角色无权执行该操作（平台级）"
+            : "你还不是任何项目的成员，无法执行写操作",
+          data: null,
+        });
+      }
       return next();
+    } catch (error) {
+      return next(error);
     }
-
-    const identity = request.identity;
-    if (!identity || identity.kind === "anonymous") {
-      return response.status(401).json({
-        code: "UNAUTHORIZED",
-        message: "请先登录",
-        data: null,
-      });
-    }
-
-    const declared = String(
-      request.headers["x-content-role"] || request.headers["X-Content-Role"] || "",
-    )
-      .trim()
-      .toLowerCase();
-    // 未声明角色按 viewer 处理：能读，不能写。宁可少放行也不隐式放宽。
-    const roleCode = isKnownRole(declared) ? declared : ROLES.viewer;
-
-    const verdict = can(roleCode, action);
-    request.access = { ...verdict, roleCode };
-
-    if (!verdict.allowed) {
-      return response.status(403).json({
-        code: "FORBIDDEN",
-        message: "当前角色无权执行该操作（平台级）",
-        data: null,
-      });
-    }
-    return next();
   };
 }
 

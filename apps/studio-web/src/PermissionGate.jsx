@@ -17,6 +17,7 @@ import {
 } from "./permissions.js";
 import {
   detectAuthMode,
+  fetchMyRoles,
   login,
   readRoleCode,
   readToken,
@@ -166,7 +167,11 @@ export function AuthPanel({
 }
 
 /**
- * 会话 hook：探测后端鉴权模式、读取本地 token/角色、给出 permissions 视图。
+ * 会话 hook：探测后端鉴权模式、从服务端取真实角色、给出 permissions 视图。
+ *
+ * 角色来源是 **`GET /api/auth/me/projects`（服务端权威）**，不是本地缓存。
+ * 本地缓存只在首屏渲染时作为占位，拿到服务端结果后立即覆盖——否则用户
+ * 可能因为缓存里是 owner 而短暂看到不该看到的按钮。
  *
  * 探测失败一律回落 off（与后端默认一致）。理由：网络抖动不该让用户突然
  * 看到"要求登录"，那比不提要求更困扰。
@@ -175,6 +180,7 @@ export function usePermissionSession(apiBaseUrl, { projectId = "", fetchImpl = f
   const [authMode, setAuthMode] = useState("off");
   const [roleCode, setRoleCode] = useState(() => readRoleCode());
   const [token, setToken] = useState(() => readToken());
+  const [memberships, setMemberships] = useState([]);
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
@@ -195,6 +201,22 @@ export function usePermissionSession(apiBaseUrl, { projectId = "", fetchImpl = f
     };
   }, [apiBaseUrl, fetchImpl]);
 
+  // 已登录时向服务端确认真实角色。这是权限显示的唯一可信来源。
+  useEffect(() => {
+    if (!token || authMode === "off") return undefined;
+    let cancelled = false;
+    fetchMyRoles(apiBaseUrl, fetchImpl).then((data) => {
+      if (cancelled || !data) return;
+      setRoleCode(data.platformRole || "");
+      setMemberships(data.memberships || []);
+      // 服务端结果覆盖本地缓存，下次首屏直接用它。
+      saveSession({ token, roleCode: data.platformRole || "" });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [apiBaseUrl, authMode, fetchImpl, token]);
+
   const permissions = useMemo(
     () => buildPermissionView({ authMode, roleCode: roleCode || null }),
     [authMode, roleCode],
@@ -204,19 +226,22 @@ export function usePermissionSession(apiBaseUrl, { projectId = "", fetchImpl = f
     clearSession();
     setToken("");
     setRoleCode("");
+    setMemberships([]);
   }, []);
 
   const signIn = useCallback((data) => {
+    // 登录响应里的 roleCode 通常为空（后端不知道该用户在哪个项目），
+    // 真正的角色由上面的 me/projects 效应拉取。
     const nextToken = data?.token || "";
-    const nextRole = data?.user?.roleCode || "";
     setToken(nextToken);
-    setRoleCode(nextRole);
+    setRoleCode(data?.user?.roleCode || "");
   }, []);
 
   return {
     authMode,
     token,
     roleCode,
+    memberships,
     permissions,
     ready,
     projectId,

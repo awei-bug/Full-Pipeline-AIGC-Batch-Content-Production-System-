@@ -53,24 +53,46 @@ export function readRoleCode() {
 }
 
 /**
- * 构造带鉴权与角色声明的请求头。
+ * 构造带鉴权的请求头。
  *
- * `X-Content-Role` 是后端平台级守卫识别角色的依据（见 lib/permissions.js 的
- * requirePlatformPermission）。**不带这个头，后端会把已登录用户一律当成 viewer**，
- * 于是所有平台级写操作都会被 403——前端看起来"登录了却什么都不能做"。
+ * **不再发送 `X-Content-Role`。** 后端平台级守卫已改为查 `project_members` 表
+ * 取该用户的真实角色（服务端权威），前端自述角色的头已被后端忽略。
+ * 保留发送它只会造成"以为前端说了算"的误解，所以彻底去掉。
  *
- * 注意这是前端自述的角色，后端仍然只信自己那套判定：真正的项目级校验走
- * project_members 表，平台级校验用这个头。它被篡改的后果是"能多显示几个按钮"，
- * 而真正写操作仍受后端约束（这是当前设计的已知边界，见 README）。
+ * 本地缓存的 roleCode 仍用于**渲染**（控制按钮显隐），但它不再影响后端判定。
  */
 export function authHeaders(extra = {}) {
   const token = readToken();
-  const role = readRoleCode();
   return {
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    ...(role ? { "X-Content-Role": role } : {}),
     ...extra,
   };
+}
+
+/**
+ * 从服务端取当前用户的真实角色。
+ *
+ * 这是 `GET /api/auth/me/projects` 的前端封装。返回：
+ * - `memberships`：各项目角色
+ * - `platformRole`：服务端折算的最高角色（前端拿它控制按钮显隐）
+ * - `actions`：该角色可执行的权限点
+ *
+ * 失败时返回 null，调用方按"无角色"处理（只读），不抛错——角色查询失败
+ * 不该让页面白屏或误以为自己是 owner。
+ */
+export async function fetchMyRoles(apiBaseUrl, fetchImpl = fetch) {
+  const token = readToken();
+  if (!token) return null;
+  try {
+    const response = await fetchImpl(`${apiBaseUrl}/api/auth/me/projects`, {
+      headers: authHeaders(),
+    });
+    if (!response.ok) return null;
+    const payload = await response.json();
+    return payload?.data || null;
+  } catch {
+    return null;
+  }
 }
 
 export function saveSession({ token, roleCode }) {

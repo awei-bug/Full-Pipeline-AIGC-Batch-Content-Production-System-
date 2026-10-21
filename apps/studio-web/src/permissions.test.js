@@ -207,14 +207,15 @@ test("detectAuthMode 网络失败回落 off（不让抖动变成要求登录）"
 
 /* --------------------------------------------- 请求头（平台级守卫依赖它） */
 
-test("authHeaders 带上 token 与角色头", () => {
+test("authHeaders 只带 token，不再自述角色", () => {
   const restore = installFakeStorage();
   try {
     saveSession({ token: "tok_xyz", roleCode: "editor" });
     const headers = authHeaders();
     assert.equal(headers.Authorization, "Bearer tok_xyz");
-    // 不带这个头后端会把已登录用户当 viewer，所有平台级写操作都会被 403
-    assert.equal(headers["X-Content-Role"], "editor");
+    // 角色已改为服务端查 project_members 决定，前端不再自述。
+    // 若这里又出现 X-Content-Role，说明有人退回了"前端说了算"的旧实现。
+    assert.equal("X-Content-Role" in headers, false);
   } finally {
     restore();
   }

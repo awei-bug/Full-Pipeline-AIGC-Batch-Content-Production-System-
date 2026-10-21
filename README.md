@@ -240,9 +240,9 @@ $env:AUTH_SECRET="至少16位的随机字符串"   # 不配置则登录接口 fa
 
 `GET /api/data-hub/search` 是只读检索，刻意不挂写权限。
 
-**平台级角色从哪来**：请求头 `X-Content-Role`（前端在选定项目后带上）。
-**未声明或角色未知时一律按 `viewer` 处理**——宁可少放行，也不做"扫所有项目取最高角色"
-这类隐式放宽，那种逻辑很难审计。
+**平台级角色从哪来**：服务端查 `project_members`，取该用户在所有项目中的最高角色
+（详见下一节）。不属于任何项目的已登录用户平台级角色为 null，按 `viewer` 处理——
+只能读，不能做平台级写操作。
 
 将来若要把批次/任务真正纳入项目隔离，需要给表加 `project_id` 并回填，
 那是独立的一轮工作，不该和权限改动混在一起。
@@ -257,14 +257,30 @@ $env:AUTH_SECRET="至少16位的随机字符串"   # 不配置则登录接口 fa
 | 根据文案生成图片/视频 | `POST /api/content-workflows` | `platform:generate` | 显示原因，不显示按钮 |
 | 推送到商城 | `POST /api/listing-packs/:id/push` | `content:publish` | 显示原因，不显示按钮 |
 
-前端请求统一经 `authHeaders()` 带上 `Authorization` 与 `X-Content-Role`。
-**不带 `X-Content-Role` 时后端会把已登录用户当 `viewer`**，所有平台级写操作都会
-403——表现为"登录了却什么都不能做"。这一条在测试里有专门断言。
+前端请求统一经 `authHeaders()` 带上 `Authorization`。
 
-**一个已知的诚实边界**：`X-Content-Role` 是前端自述的角色，理论上可被篡改。
-后果是"能多显示几个按钮"，但真正写操作仍受后端约束——项目级操作走
-`project_members` 表校验，平台级操作用这个头。要把平台级角色也变成服务端权威，
-需要一个"当前用户在各项目中的有效角色"查询接口，属于后续工作。
+**角色不再由前端声明（2026-12 改）**：早期实现读请求头 `X-Content-Role`，那是前端
+自述。现在后端守卫改为查 `project_members` 表、取该用户在所有项目中的**最高角色**
+作为平台级角色，前端无法声明。已验证：伪造 `X-Content-Role: owner` 不会提权。
+
+新增 `GET /api/auth/me/projects` 供前端查询自己各项目的角色与折算出的平台级角色：
+
+```json
+{
+  "userId": "user_xxx",
+  "memberships": [{ "projectId": "project_a", "roleCode": "editor", "status": "active" }],
+  "platformRole": "editor",
+  "actions": ["project:read", "content:write", "platform:generate", "..."]
+}
+```
+
+前端用它控制按钮显隐；真正的判定仍在后端。本地缓存的 roleCode 只作首屏占位，
+拿到服务端结果后立即覆盖——否则用户可能因缓存里是 owner 而短暂看到不该看的按钮。
+
+**为什么平台级角色取"最高"而不是要求专门的平台管理员**：项目角色是项目级概念，
+平台级动作需要折算规则。取最高是唯一不引入新概念（不必新增"平台管理员"表与
+生命周期管理）的做法。代价是任一项目的 owner 都能做平台级写操作——在当前
+"批次/任务是全局共享资源"的事实下，这与数据模型一致。
 
 ## 前端权限显示
 
