@@ -21,3 +21,10 @@ npm-debug.log*
 rag.db
 .env
 .env.*
+
+# Agent / editor working memory and review artifacts (not deliverables)
+.workbuddy/
+.impeccable/
+
+# Python packaging metadata
+*.egg-info/

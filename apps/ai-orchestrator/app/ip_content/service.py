@@ -223,6 +223,7 @@ async def _keep_lease(store, item_id, token):
 class IPContentService:
     def __init__(self, router, *, store=None, checkpointer=None, search_key="",
                  enable_agent_team: bool = False, max_self_revisions: int = 3,
+                 enable_planning: bool = False,
                  object_store=None, eval_enabled: bool = True, eval_threshold: float = 0.7,
                  prompt_opt_enabled: bool = False, safety_llm_enabled: bool = False,
                  safety_deny_words: list[str] | None = None, cost_pricing=None):
@@ -232,6 +233,7 @@ class IPContentService:
         self.search_key = search_key
         self.enable_agent_team = enable_agent_team
         self.max_self_revisions = max_self_revisions
+        self.enable_planning = enable_planning
         self.object_store = object_store
         self.eval_enabled = eval_enabled
         self.eval_threshold = eval_threshold
@@ -395,7 +397,8 @@ class IPContentService:
                 graph = build_team(self.router, checkpointer=self.checkpointer,
                                    on_stage=on_stage, assert_lease=assert_lease,
                                    search_key=self.search_key, max_revisions=self.max_self_revisions,
-                                   prompt_overrides=prompt_overrides)
+                                   prompt_overrides=prompt_overrides,
+                                   enable_planning=self.enable_planning)
             else:
                 graph = build_graph(self.router, checkpointer=self.checkpointer,
                                     on_stage=on_stage, assert_lease=assert_lease,

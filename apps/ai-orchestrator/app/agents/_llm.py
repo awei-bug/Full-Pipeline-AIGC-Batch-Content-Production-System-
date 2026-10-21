@@ -56,6 +56,7 @@ async def call_stage(
     on_stage=None,
     assert_lease=None,
     stage_name: str = "llm",
+    tool_log: list | None = None,
 ) -> tuple[str, dict[str, int], str]:
     """单次 LLM 阶段调用，含工具循环与指数退避重试。
 
@@ -69,28 +70,42 @@ async def call_stage(
     available = {name: tool_map[name] for name in enabled_tools if name in tool_map}
     definitions = [convert_to_openai_tool(t) for t in available.values()] or None
     usage: dict[str, int] = dict(base_usage or {})
+    max_tool_rounds = 5
+
+    def _acc(result):
+        for key, value in (result.get("usage") or {}).items():
+            if isinstance(value, int):
+                usage[key] = usage.get(key, 0) + value
+
     for attempt in range(3):
         try:
             result = await router.complete(messages, definitions)
-            for key, value in (result.get("usage") or {}).items():
-                if isinstance(value, int):
-                    usage[key] = usage.get(key, 0) + value
+            _acc(result)
             message = result["message"]
-            if message.get("tool_calls"):
+            # 真正的多轮工具循环：模型可在一轮内多次发起工具调用，并在拿到
+            # 工具结果后继续推理，直到产出最终正文（或达到上限防止失控）。
+            # 这正是「agentic」与「一次性提示词链路」的本质区别。
+            tool_round = 0
+            while message.get("tool_calls") and tool_round < max_tool_rounds:
                 messages.append(message)
                 for call in message["tool_calls"][:3]:
                     name = call.get("function", {}).get("name")
                     function = available.get(name)
+                    entry = {"name": name, "arguments": call.get("function", {}).get("arguments") or "{}"}
                     try:
-                        arguments = json.loads(call.get("function", {}).get("arguments") or "{}")
+                        arguments = json.loads(entry["arguments"])
                         output = await function.ainvoke(arguments) if function else "未授权的工具"
+                        entry["ok"] = function is not None
                     except (ValueError, TypeError, httpx.HTTPError) as exc:
                         output = f"工具不可用：{exc}"
+                        entry["ok"] = False
+                    entry["output_preview"] = clip(str(output), 400)
+                    if tool_log is not None:
+                        tool_log.append(entry)
                     messages.append({"role": "tool", "tool_call_id": call["id"], "content": str(output)})
+                tool_round += 1
                 result = await router.complete(messages)
-                for key, value in (result.get("usage") or {}).items():
-                    if isinstance(value, int):
-                        usage[key] = usage.get(key, 0) + value
+                _acc(result)
                 message = result["message"]
             content = message.get("content")
             if isinstance(content, list):

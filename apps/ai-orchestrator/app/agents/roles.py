@@ -3,16 +3,12 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any, Iterable
 
-from ..ip_content.lore import search_lore
+from ..evaluation.score import evaluate_chapter
 from ._llm import call_stage, clip
 from .prompts import AGENT_SYSTEM_PROMPTS
 from .protocol import AgentMessage, AgentOutput, AgentRole, append_one, append_unique
 
 CONSTRAINT_HINTS = ("不能", "必须", "不得", "禁止", "规则", "约束", "只允许", "不可")
-
-
-def _relevant(lore: str, title: str, brief: str, limit: int = 6) -> str:
-    return search_lore(lore, f"{title} {brief}", limit=limit)
 
 
 class BaseAgent(ABC):
@@ -38,16 +34,21 @@ class ResearcherAgent(BaseAgent):
                          enabled_tools=("query_ip_lore", "web_search"), **kw)
 
     async def act(self, state: dict, memory=None) -> AgentOutput:
+        # 不再由代码预填检索结果：把 IP 设定库作为 query_ip_lore 工具交给模型
+        # 自主选择调用，体现真正的 agentic 工具循环。
         lore = state.get("lore", "")
-        relevant = _relevant(lore, state["title"], state["brief"], 6)
+        tool_log: list[dict] = []
         text = (
             f"章节：{state['title']}\n需求：{clip(state['brief'], 1800)}\n"
-            f"IP设定库检索：{clip(relevant, 5500)}\n前章事实：{clip(state.get('previous_chapters', ''), 9000)}"
+            f"前章事实：{clip(state.get('previous_chapters', ''), 9000)}\n"
+            f"请使用 query_ip_lore 工具检索与本章相关的 IP 设定、冲突与待核实事实"
+            f"（联网资料用 web_search，但不得当作官方设定）。"
         )
         content, usage, model = await call_stage(
             self.router, self.system, text, enabled_tools=self.enabled_tools, lore=lore,
             search_key=self.search_key, base_usage=state.get("usage"),
             on_stage=self.on_stage, assert_lease=self.assert_lease, stage_name="agent_research",
+            tool_log=tool_log,
         )
         constraints = list(state.get("memory_constraints") or [])
         for line in content.splitlines():
@@ -57,17 +58,18 @@ class ResearcherAgent(BaseAgent):
         return AgentOutput(
             updates={"research": content, "usage": usage, "model": model, "memory_constraints": constraints},
             message=msg,
-            trace={"role": "researcher", "action": "research"},
+            trace={"role": "researcher", "action": "research", "tool_calls": tool_log},
         )
 
 
 class WriterAgent(BaseAgent):
     def __init__(self, router, system_override=None, **kw):
-        super().__init__(router, AgentRole.WRITER, system_override or AGENT_SYSTEM_PROMPTS["writer"], **kw)
+        super().__init__(router, AgentRole.WRITER, system_override or AGENT_SYSTEM_PROMPTS["writer"],
+                         enabled_tools=("query_ip_lore",), **kw)
 
     async def act(self, state: dict, memory=None) -> AgentOutput:
         lore = state.get("lore", "")
-        relevant = _relevant(lore, state["title"], state["brief"], 6)
+        tool_log: list[dict] = []
         variant = state.get("prompt_variant")
         system = self.system + (
             " 先按人物动机组织场景，保持自然叙事。" if variant == "A"
@@ -75,15 +77,17 @@ class WriterAgent(BaseAgent):
         )
         feedback = state.get("feedback")
         text = (
-            f"章节：{state['title']}\n需求：{clip(state['brief'], 1800)}\n设定：{clip(relevant, 5500)}\n"
+            f"章节：{state['title']}\n需求：{clip(state['brief'], 1800)}\n"
             f"前章事实：{clip(state.get('previous_chapters', ''), 9000)}\n调研：{clip(state.get('research', ''), 2200)}\n"
+            f"需要核对世界观时调用 query_ip_lore 工具查询官方设定，确保不偏离 IP。"
         )
         if feedback:
             text += f"审核意见（必须据此修改，不得重复同类问题）：{feedback}\n"
         content, usage, model = await call_stage(
             self.router, system, text, lore=lore, search_key=self.search_key,
-            base_usage=state.get("usage"), on_stage=self.on_stage,
-            assert_lease=self.assert_lease, stage_name="agent_draft",
+            enabled_tools=self.enabled_tools, base_usage=state.get("usage"),
+            on_stage=self.on_stage, assert_lease=self.assert_lease, stage_name="agent_draft",
+            tool_log=tool_log,
         )
         updates: dict[str, Any] = {"draft": content, "usage": usage, "model": model}
         if feedback:
@@ -99,28 +103,33 @@ class WriterAgent(BaseAgent):
         return AgentOutput(
             updates=updates,
             message=msg,
-            trace={"role": "writer", "action": "draft_rewrite" if feedback else "draft"},
+            trace={"role": "writer", "action": "draft_rewrite" if feedback else "draft", "tool_calls": tool_log},
         )
 
 
 class EditorAgent(BaseAgent):
     def __init__(self, router, system_override=None, **kw):
-        super().__init__(router, AgentRole.EDITOR, system_override or AGENT_SYSTEM_PROMPTS["editor"], **kw)
+        super().__init__(router, AgentRole.EDITOR, system_override or AGENT_SYSTEM_PROMPTS["editor"],
+                         enabled_tools=("query_ip_lore",), **kw)
 
     async def act(self, state: dict, memory=None) -> AgentOutput:
-        relevant = _relevant(state.get("lore", ""), state["title"], state["brief"])
+        lore = state.get("lore", "")
+        tool_log: list[dict] = []
         text = (
-            f"章节：{state['title']}\n设定摘录：{clip(relevant, 2800)}\n初稿：{clip(state.get('draft', ''), 11000)}"
+            f"章节：{state['title']}\n初稿：{clip(state.get('draft', ''), 11000)}\n"
+            f"需要核实时调用 query_ip_lore 工具，确保润色不偏离官方设定。"
         )
         content, usage, model = await call_stage(
-            self.router, self.system, text, base_usage=state.get("usage"),
+            self.router, self.system, text, lore=lore, search_key=self.search_key,
+            enabled_tools=self.enabled_tools, base_usage=state.get("usage"),
             on_stage=self.on_stage, assert_lease=self.assert_lease, stage_name="agent_polish",
+            tool_log=tool_log,
         )
         msg = AgentMessage(AgentRole.EDITOR, "critic", "polish", clip(content, 300))
         return AgentOutput(
             updates={"polished": content, "usage": usage, "model": model},
             message=msg,
-            trace={"role": "editor", "action": "polish"},
+            trace={"role": "editor", "action": "polish", "tool_calls": tool_log},
         )
 
 
@@ -131,15 +140,23 @@ class CriticAgent(BaseAgent):
 
     async def act(self, state: dict, memory=None) -> AgentOutput:
         lore = state.get("lore", "")
-        relevant = _relevant(lore, state["title"], state["brief"], 8)
+        tool_log: list[dict] = []
         text = (
-            f"章节：{state['title']}\n原始设定：{clip(relevant, 7000)}\n"
-            f"前章事实：{clip(state.get('previous_chapters', ''), 9000)}\n成稿：{clip(state.get('polished', ''), 11000)}"
+            f"章节：{state['title']}\n前章事实：{clip(state.get('previous_chapters', ''), 9000)}\n"
+            f"成稿：{clip(state.get('polished', ''), 11000)}\n"
+            f"审核时调用 query_ip_lore 工具核对官方设定；依据须写明核对的设定或前章事实。"
         )
         content, usage, model = await call_stage(
             self.router, self.system, text, enabled_tools=self.enabled_tools, lore=lore,
             search_key=self.search_key, base_usage=state.get("usage"),
             on_stage=self.on_stage, assert_lease=self.assert_lease, stage_name="agent_review",
+            tool_log=tool_log,
+        )
+        # 确定性评测与 LLM 审核打通：评测指标作为 PASS/FAIL 的客观证据写入 trace，
+        # 也让 critic 的反馈有结构化依据，而非纯拍脑袋。
+        eval_report = evaluate_chapter(
+            state.get("polished", "") or "", lore=lore,
+            constraints=list(state.get("memory_constraints") or []),
         )
         lines = content.splitlines()
         valid = (
@@ -169,5 +186,6 @@ class CriticAgent(BaseAgent):
         return AgentOutput(
             updates=updates,
             message=msg,
-            trace={"role": "critic", "action": trace_action},
+            trace={"role": "critic", "action": trace_action, "tool_calls": tool_log,
+                   "eval": eval_report.to_dict()},
         )

@@ -38,11 +38,17 @@ class AgentTeamState(TypedDict, total=False):
 
 
 def route_next(state: AgentTeamState) -> str:
-    """Supervisor 的路由决策：根据各角色产物是否齐备决定下一步。"""
+    """Supervisor 的路由决策：根据各角色产物是否齐备、并尊重运行期生成的 plan 决定下一步。"""
+    plan = state.get("plan") or {}
     if state.get("feedback") and state.get("draft") is not None:
         return "writer"  # 存在审核反馈且已有初稿：交还撰写 agent 改写
     if state.get("research") is None:
-        return "researcher"
+        # 条件化编排：plan 可在无设定库时跳过调研步骤（不再是写死的四步）。
+        if plan.get("skip_researcher"):
+            if state.get("draft") is None:
+                return "writer"
+        else:
+            return "researcher"
     if state.get("draft") is None:
         return "writer"
     if state.get("polished") is None:
@@ -54,6 +60,12 @@ def route_next(state: AgentTeamState) -> str:
     return "escalate"  # 审核未通过且已达自修正上限：升级人工复核
 
 
+def make_plan(state: AgentTeamState) -> dict:
+    """运行期规划（受监督，不牺牲确定性）：依据任务特征决定可跳过的步骤。"""
+    lore = (state.get("lore") or "").strip()
+    return {"skip_researcher": not lore}  # 没有设定库可查时跳过调研员
+
+
 def build_team(
     router,
     *,
@@ -63,6 +75,7 @@ def build_team(
     search_key: str = "",
     max_revisions: int = 3,
     prompt_overrides: dict[str, str] | None = None,
+    enable_planning: bool = False,
 ):
     """构建多智能体协作图：Supervisor 协调 调研/撰写/润色/审核 四个角色 agent。
 
@@ -106,6 +119,15 @@ def build_team(
 
     async def supervisor_node(state: AgentTeamState) -> dict[str, Any]:
         decision = route_next(state)
+        if enable_planning and "plan" not in state:
+            # 运行期规划：让 Supervisor 依据任务特征决定编排，而非固定四步。
+            plan = make_plan(state)
+            trace = {"role": "supervisor", "action": "plan", "plan": plan}
+            return {
+                "next": decision,
+                "agent_trace": append_one(state.get("agent_trace"), trace),
+                "plan": plan,
+            }
         trace = {"role": "supervisor", "action": "route", "to": decision}
         return {"next": decision, "agent_trace": append_one(state.get("agent_trace"), trace)}
 

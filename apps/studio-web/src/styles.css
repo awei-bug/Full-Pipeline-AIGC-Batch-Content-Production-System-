@@ -3561,3 +3561,122 @@ input[type="checkbox"] {
     transition-duration: 0.001ms !important;
   }
 }
+
+/* ------------------------------------------- 8.x 协作轨迹面板（agent 可观测） */
+.ip-collab-trace {
+  margin-top: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.ip-collab-trace > summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 12px 16px;
+  font-weight: 600;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.ip-collab-trace > summary::-webkit-details-marker { display: none; }
+.ip-collab-trace > summary::before {
+  content: "\25B8";
+  color: var(--brand-500);
+  transition: transform 0.15s ease;
+}
+.ip-collab-trace[open] > summary::before { transform: rotate(90deg); }
+.ip-trace-flag {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--warning-ink);
+  background: var(--warning-soft);
+  border: 1px solid var(--warning-line);
+  padding: 2px 10px;
+  border-radius: var(--radius-pill);
+}
+.ip-trace-human {
+  margin: 0;
+  padding: 0 16px 12px;
+  color: var(--warning-ink);
+  font-size: 13px;
+}
+.ip-trace-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 16px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ip-trace-step {
+  position: relative;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--brand-300);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+.ip-trace-step.is-supervisor { border-left-color: var(--brand-500); }
+.ip-trace-step.is-researcher { border-left-color: var(--info); }
+.ip-trace-step.is-writer { border-left-color: var(--success); }
+.ip-trace-step.is-editor { border-left-color: var(--brand-400); }
+.ip-trace-step.is-critic { border-left-color: var(--warning); }
+.ip-trace-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.ip-trace-role { font-weight: 700; color: var(--text); }
+.ip-trace-action {
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+.ip-trace-plan,
+.ip-trace-eval {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.ip-trace-eval { color: var(--success-ink); }
+.ip-trace-tools {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.ip-trace-tools code {
+  background: var(--surface-inset);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  padding: 1px 8px;
+  font-size: 12px;
+  color: var(--brand-ink);
+}
+.ip-trace-fail { color: var(--danger); font-style: normal; font-weight: 600; }
+.ip-trace-messages {
+  padding: 0 16px 14px;
+  font-size: 13px;
+}
+.ip-trace-messages ul {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ip-trace-messages li {
+  padding: 8px 10px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+}
+.ip-trace-arrow { color: var(--brand-500); margin: 0 4px; }

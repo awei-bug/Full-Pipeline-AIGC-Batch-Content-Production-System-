@@ -6,6 +6,26 @@ LangGraph 四节点（调研、撰写、润色、审核）、工具调用、批�
 
 原有跨境商业内容工作区仍保留，支持商品素材的批量生成和导出。
 
+## 垂类定位与能力冻结（2026-12，阶段 0 已执行）
+
+本项目属于**电商垂类产品线**，角色是**素材供给**（Listing 文案 / 图片 / 视频）。整合方案见
+[电商垂类整合计划](../电商垂类整合计划/README.md)。
+
+以下能力已冻结：后续迭代不再投入、不对外演示、验收不计入。**冻结不等于删除**，代码与测试全部保留，恢复条件见冻结清单。
+
+| 冻结项 | 代码落点 | 原因 | 恢复条件 |
+| --- | --- | --- | --- |
+| 数字 IP 工作区作为默认工作区 | `apps/studio-web/src/App.jsx`（默认 `workspaceMode="ip"`）、`IPWorkspace.jsx`、`apps/ai-orchestrator/app/ip_content/`、`apps/api-server/src/routes/ip-content.js` | 数字 IP / 游戏世界观与电商内容供给无关，且占用默认 tab，电商批量 Listing 生成反而退居第二位 | 明确服务游戏/网文/动漫客户，且商品内容链路已交付 |
+| IP 相关测试与本地存储 | `apps/api-server/src/routes/ip-content.test.js`、`localStorage` 键 `ip-content-last-batch` | 随上一项一起冻结；测试保留但不作为对外验收门禁 | 同上 |
+
+**不冻结（电商核心，继续投入）**：`listing-packs` 成品包、`data-hub` 同步与 ingest、商品批量导入/任务/导出、
+`ai-orchestrator/app/graphs/nodes/` 单商品内容流水线。
+
+> 已知不一致：`docs/mvp-acceptance-checklist.md` 要求「页面默认进入外贸批量内容工作台」，而当前代码默认是 IP 工作区。
+> 切换默认 tab 属于行为变更，按阶段 0 规则不在本次执行范围内，留待后续阶段处理。
+
+冻结清单全文：[阶段0-电商无关能力冻结清单.md](../电商垂类整合计划/阶段0-电商无关能力冻结清单.md)。
+
 ## 效果演示
 
 [观看演示视频](demo/demo.mp4)

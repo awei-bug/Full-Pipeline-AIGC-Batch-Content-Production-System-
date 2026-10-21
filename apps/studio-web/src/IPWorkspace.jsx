@@ -295,7 +295,8 @@ export function IPWorkspace() {
             return <div key={stage.id} className={`ip-stage ${complete ? "is-done" : ""} ${attention ? "is-attention" : ""} ${current.stage === stage.id && !complete ? "is-current" : ""}`}><i />{stage.label}</div>;
           })}</div>
           {current.status === "failed" && <div className="ip-task-error" role="alert"><strong>章节生成中断</strong><p>{current.error}</p><button className="ip-primary" type="button" onClick={() => retry(current)}>从检查点恢复</button></div>}
-          {current.result ? <><div className="ip-document">{current.result.content}</div><div className={`ip-review ${current.result.approved ? "is-approved" : "is-rejected"}`}><div><strong>{current.result.approved ? current.continuityIncomplete ? "模型通过，待核对历史章节" : "模型审核通过" : "模型未通过，待人工复核"}</strong><span>{current.result.model} · {current.result.usage?.total_tokens ?? "--"} tokens</span></div><p>{current.result.review}</p></div>
+          {current.result ? <><div className="ip-document">{current.result.content}</div><div className={`ip-review ${current.result.approved ? "is-approved" : "is-rejected"}`}><div><strong>{current.result.approved ? current.continuityIncomplete ? "模型通过，待核对历史章节" : "模型审核通过" : "模型未通过，待人工复核"}</strong><span>{current.result.model} · {current.result.usage?.total_tokens ?? "--"} tokens</span></div>            <p>{current.result.review}</p></div>
+            <AgentTracePanel result={current.result} />
             {current.staleContext && <p className="ip-context-warning">前章成稿已变更，本章需要重新检查连续性。</p>}
             {current.continuityIncomplete && <p className="ip-context-warning">较早章节的情节线索超出上下文容量。请对照完整前文人工复核，确认后再继续后续章节。</p>}
             <div className="ip-human-review"><div><strong>人工验收</strong><span>{current.humanReview?.decision === "approved" ? "已通过" : current.humanReview?.decision === "rejected" ? "已退回" : "待确认"}</span></div>
@@ -324,4 +325,60 @@ export function IPWorkspace() {
         </article>}</div>
     </div>}
   </div>;
+}
+
+// 协作轨迹：把后端多角色 agent 的运行记录（轨迹步骤、工具调用、跨角色消息、
+// 人工接管标记）可视化，让「agent 协作」从黑盒变成可观测。
+function AgentTracePanel({ result }) {
+  const trace = result?.agentTrace || [];
+  const messages = result?.agentMessages || [];
+  const needsHuman = result?.needsHumanReview;
+  if (!trace.length && !messages.length) return null;
+  const roleLabel = { supervisor: "监督", researcher: "调研", writer: "撰写", editor: "润色", critic: "审核" };
+  return (
+    <details className="ip-collab-trace" open={needsHuman}>
+      <summary>协作轨迹{needsHuman ? <span className="ip-trace-flag">需人工复核</span> : null}</summary>
+      {needsHuman ? <p className="ip-trace-human">审核未通过或安全巡检拦截，已转入人工接管流程。</p> : null}
+      {trace.length > 0 && (
+        <ol className="ip-trace-list">
+          {trace.map((step, i) => (
+            <li key={i} className={`ip-trace-step is-${step.role}`}>
+              <div className="ip-trace-head">
+                <span className="ip-trace-role">{roleLabel[step.role] || step.role}</span>
+                <span className="ip-trace-action">{step.action}</span>
+              </div>
+              {step.plan ? <div className="ip-trace-plan">计划：{Object.entries(step.plan).filter(([, v]) => v).map(([k]) => k).join("、")}</div> : null}
+              {step.tool_calls?.length > 0 && (
+                <ul className="ip-trace-tools">
+                  {step.tool_calls.map((tool, j) => (
+                    <li key={j}><code>{tool.name}</code>{tool.ok === false ? <em className="ip-trace-fail"> 失败</em> : null}</li>
+                  ))}
+                </ul>
+              )}
+              {step.eval?.metrics ? (
+                <div className="ip-trace-eval">
+                  评测 {Math.round((step.eval.score ?? 0) * 100)}%
+                  {step.eval.passed ? " · 通过" : " · 未过"}
+                </div>
+              ) : null}
+            </li>
+          ))}
+        </ol>
+      )}
+      {messages.length > 0 && (
+        <div className="ip-trace-messages">
+          <strong>跨角色消息</strong>
+          <ul>
+            {messages.map((m, i) => (
+              <li key={i}>
+                <span className="ip-trace-role">{roleLabel[m.sender] || m.sender}</span>
+                <span className="ip-trace-arrow">→</span>
+                {m.recipient}：{m.content}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </details>
+  );
 }
