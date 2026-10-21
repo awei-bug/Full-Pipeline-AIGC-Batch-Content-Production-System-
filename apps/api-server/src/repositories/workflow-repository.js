@@ -1,6 +1,15 @@
 import crypto from "node:crypto";
 
-const DEMO_USER_ID = "user_demo";
+import { DEMO_USER_ID } from "../lib/identity.js";
+
+/**
+ * 用户归属现在由调用方传入（来自 request.identity），默认回落到演示用户。
+ * 保留默认值是为了兼容无请求上下文的内部调用与既有测试；新代码必须显式传 userId。
+ */
+function resolveUser(userId) {
+  const value = String(userId || "").trim();
+  return value || DEMO_USER_ID;
+}
 
 const TASK_TYPE_LABELS = {
   text_to_image: "图片作品",
@@ -183,7 +192,9 @@ export class MemoryWorkflowRepository {
     requestType = "text_to_image",
     styleCode = null,
     aspectRatio = null,
+    userId = null,
   }) {
+    const owner = resolveUser(userId);
     const creationRequestId = `cr_${crypto.randomUUID()}`;
     const taskId = `task_${crypto.randomUUID()}`;
     const currentTime = new Date().toISOString();
@@ -192,7 +203,7 @@ export class MemoryWorkflowRepository {
       id: creationRequestId,
       requestNo: `CR_${Date.now()}`,
       projectId,
-      userId: DEMO_USER_ID,
+      userId: owner,
       requestType,
       promptText: prompt,
       styleCode,
@@ -208,7 +219,7 @@ export class MemoryWorkflowRepository {
       taskNo: `TASK_${Date.now()}`,
       creationRequestId,
       projectId,
-      userId: DEMO_USER_ID,
+      userId: owner,
       taskType: requestType,
       status: "created",
       currentStage: "dispatching",
@@ -504,7 +515,9 @@ export class PostgresWorkflowRepository {
     requestType = "text_to_image",
     styleCode = null,
     aspectRatio = null,
+    userId = null,
   }) {
+    const owner = resolveUser(userId);
     const creationRequestId = `cr_${crypto.randomUUID()}`;
     const taskId = `task_${crypto.randomUUID()}`;
     const requestNo = `CR_${Date.now()}`;
@@ -541,7 +554,7 @@ export class PostgresWorkflowRepository {
            metadata
          )
          values ($1, $2, $3, $4, $5, $6, $7, $8, 'submitted', '{}'::jsonb)`,
-        [creationRequestId, requestNo, projectId, DEMO_USER_ID, requestType, prompt, styleCode, aspectRatio],
+        [creationRequestId, requestNo, projectId, owner, requestType, prompt, styleCode, aspectRatio],
       );
 
       await client.query(
@@ -561,7 +574,7 @@ export class PostgresWorkflowRepository {
            metadata
          )
          values ($1, $2, $3, $4, $5, $6, 'created', 'dispatching', null, 0, 2, 0, '{}'::jsonb)`,
-        [taskId, taskNo, creationRequestId, projectId, DEMO_USER_ID, requestType],
+        [taskId, taskNo, creationRequestId, projectId, owner, requestType],
       );
 
       await client.query(
@@ -576,7 +589,10 @@ export class PostgresWorkflowRepository {
            operator_id
          )
          values ($1, $2, null, 'created', 'dispatching', '创作请求已创建', 'system', $3)`,
-        [`th_${crypto.randomUUID()}`, taskId, DEMO_USER_ID],
+        // operator_type 是 system，operator_id 就该是 system，不是某个用户。
+        // 此前写死 user_demo 会把"系统状态流转"误记成"演示用户操作"，
+        // 审计时无法区分谁触发的。
+        [`th_${crypto.randomUUID()}`, taskId, "system"],
       );
 
       await client.query("commit");
@@ -799,7 +815,7 @@ export class PostgresWorkflowRepository {
          operator_id
        )
        values ($1, $2, 'created', 'queued', 'request_validating', '编排服务已受理', 'system', $3)`,
-      [`th_${crypto.randomUUID()}`, taskId, DEMO_USER_ID],
+      [`th_${crypto.randomUUID()}`, taskId, "system"],
     );
   }
 
@@ -1018,7 +1034,7 @@ export class PostgresWorkflowRepository {
            operator_id
          )
          values ($1, $2, $3, 'success', 'completed', '编排结果已回写', 'system', $4)`,
-        [`th_${crypto.randomUUID()}`, taskId, task.status, DEMO_USER_ID],
+        [`th_${crypto.randomUUID()}`, taskId, task.status, "system"],
       );
 
       await client.query("commit");
@@ -1159,7 +1175,7 @@ export class PostgresWorkflowRepository {
            operator_id
          )
          values ($1, $2, $3, 'failed', 'failing', $4, 'system', $5)`,
-        [`th_${crypto.randomUUID()}`, taskId, task.status, errorMessage, DEMO_USER_ID],
+        [`th_${crypto.randomUUID()}`, taskId, task.status, errorMessage, "system"],
       );
 
       await client.query("commit");

@@ -117,7 +117,8 @@ LangGraph 四节点（调研、撰写、润色、审核）、工具调用、批�
 
 这是可运行的 MVP，不是完整商业平台。当前仍未完成：
 
-- 用户登录、权限、团队空间、租户隔离
+- **权限矩阵**（登录与身份已具备，但"谁能做什么"尚未细分；见下节）
+- 团队空间（`project_members` 表与 owner 归属已通，邀请/移除成员接口未做）
 - 多渠道自动发布
 - Text2SQL 商品数据库联动
 - 稳定生产级视频生成链路
@@ -126,6 +127,48 @@ LangGraph 四节点（调研、撰写、润色、审核）、工具调用、批�
 
 多智能体协作层（Supervisor + 调研/撰写/润色/审核 角色 Agent、共享记忆、跨 agent
 消息、审核失败自主改写闭环）已在 `apps/ai-orchestrator/app/agents/` 实现，默认开启。
+
+## 用户身份（AUTH_MODE）
+
+此前 API 层把所有请求都当成同一个演示用户（仓储里写死 `user_demo`），项目、额度、
+作品无法按用户隔离。现在补了身份层，但**默认关闭**以保持既有使用方式不变：
+
+| AUTH_MODE | 行为 | 适用 |
+| --- | --- | --- |
+| `off`（默认） | 所有请求解析为 `user_demo`，行为与改造前一致；`/api/auth/*` 返回 404 | 双击启动、本地演示、既有脚本 |
+| `local` | 接受 `Authorization: Bearer <token>`；无 token 降级为匿名（可读不可写） | 局域网多人共用、内测 |
+| `strict` | 必须带有效 token，否则 401 | 对外暴露 |
+
+启用方式（至少两个变量一起给）：
+
+```powershell
+$env:AUTH_MODE="local"
+$env:AUTH_SECRET="至少16位的随机字符串"   # 不配置则登录接口 fail-closed 拒发 token
+```
+
+接口：
+
+- `POST /api/auth/register` `{username, password, email?}` — 用户名≥3、密码≥8
+- `POST /api/auth/login` `{username, password}` — 返回 `token` 与 `user`
+- `GET  /api/auth/me` — 带 token 返回当前身份
+
+设计取舍：
+
+- **默认 `off` 而不是强制鉴权**：本项目的启动方式包括双击桌面图标与 `一键启动.bat`，
+  用户不会先登录。默认强制鉴权会让现有使用方式直接坏掉，因此把升级做成显式开关。
+- **不引入 jsonwebtoken**：token 用 `node:crypto` 的 HMAC-SHA256 自签（见
+  `src/lib/local-auth.js`），十几行够用，符合项目既有的零依赖倾向。
+- **密码用 scrypt + 每用户独立 salt**，比较用 `timingSafeEqual`。
+- **登录失败不区分"用户不存在"与"密码错误"**，避免用户名枚举。
+- **`operator_type='system'` 的审计记录，`operator_id` 也记 `system`**：此前写死
+  `user_demo`，会把系统状态流转误记成用户操作，审计时无法区分谁触发的。
+
+未做（明确留白）：refresh token / 会话吊销、角色权限矩阵、SSO。这些都需要持久化
+会话与并发控制，不宜在补身份这一步顺手加。
+
+内存模式注意：未配 `DATABASE_URL` 时用户存在进程内存里，**重启即丢失**。
+真实多用户必须配 PostgreSQL（用户表 schema 见 `infra/sql/001_init_core_schema.sql`，
+密码存新增的 `content_platform.user_credentials`，不改动既有 users 表）。
 
 四项生产级增强层也已在 `apps/ai-orchestrator/app/` 落地：
 - `evaluation/`：确定性多维评测 + 提示词自优化闭环（`PROMPT_OPT_ENABLED=1` 开启自优化）

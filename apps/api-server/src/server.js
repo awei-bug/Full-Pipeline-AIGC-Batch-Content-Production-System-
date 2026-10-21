@@ -24,6 +24,10 @@ import { createDataHubClient } from "./lib/data-hub-client.js";
 import { createPool, hasDatabaseConfig } from "./lib/database.js";
 import { createAiOrchestratorClient, hasAiOrchestratorConfig } from "./lib/ai-orchestrator-client.js";
 import { ipContentRouter } from "./routes/ip-content.js";
+import { authRouter } from "./routes/auth.js";
+import { createIdentityMiddleware } from "./lib/identity.js";
+import { verifyToken } from "./lib/local-auth.js";
+import { createUsersRepository } from "./repositories/users-repository.js";
 import { MemoryProjectsRepository, PostgresProjectsRepository } from "./repositories/projects-repository.js";
 import {
   MemoryImportBatchesRepository,
@@ -61,6 +65,7 @@ export async function buildApp({ env = process.env } = {}) {
     ? new PostgresContentJobsRepository(pool, productsRepository)
     : new MemoryContentJobsRepository(productsRepository);
   const workflowRepository = pool ? new PostgresWorkflowRepository(pool) : new MemoryWorkflowRepository();
+  const usersRepository = createUsersRepository(pool);
   const aiOrchestratorClient = createAiOrchestratorClient(env);
   const listingPackService = createListingPackService({
     repository: contentJobsRepository,
@@ -83,11 +88,23 @@ export async function buildApp({ env = process.env } = {}) {
   app.locals.contentJobsRepository = contentJobsRepository;
   app.locals.workflowRepository = workflowRepository;
   app.locals.aiOrchestratorClient = aiOrchestratorClient;
+  app.locals.usersRepository = usersRepository;
+  // 路由层需要读 AUTH_MODE / AUTH_SECRET；显式挂到 locals，避免各处直接摸 process.env。
+  app.locals.env = env;
 
   app.use(cors());
   app.use("/api/ip-content", express.json({ limit: "2mb" }));
   app.use(express.json());
   app.use("/storage/assets", express.static(assetsDir));
+
+  // 身份解析必须早于所有业务路由：下游用 request.identity 决定数据归属。
+  // AUTH_MODE 默认 off —— 沿用旧的"所有请求都是演示用户"行为，不破坏双击启动。
+  app.use(
+    createIdentityMiddleware({
+      env,
+      verifyToken: (token) => verifyToken(token, { secret: env.AUTH_SECRET }),
+    }),
+  );
 
   app.get("/api/health", (_request, response) => {
     response.json({
@@ -110,6 +127,7 @@ export async function buildApp({ env = process.env } = {}) {
     });
   });
 
+  app.use("/api/auth", authRouter);
   app.use("/api/projects", projectsRouter);
   app.use("/api/import-batches", importBatchesRouter);
   app.use("/api/products", productsRouter);

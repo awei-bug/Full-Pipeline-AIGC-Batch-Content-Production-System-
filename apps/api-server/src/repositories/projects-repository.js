@@ -1,6 +1,19 @@
 import crypto from "node:crypto";
 
-const DEMO_OWNER_USER_ID = "user_demo";
+import { DEMO_USER_ID } from "../lib/identity.js";
+
+/**
+ * 项目仓储的 owner 现在由调用方传入（来自 request.identity）。
+ *
+ * 保留 DEMO_USER_ID 作为**默认值**而不是去掉：既有调用方（脚本、旧测试、
+ * 无请求上下文的内部调用）不传 ownerUserId 时行为不变，避免一次性大改。
+ * 新代码必须显式传 ownerUserId，否则在 AUTH_MODE=local 下会把用户数据
+ * 记到演示用户名下——这是静默错误，比直接报错更难发现。
+ */
+function resolveOwner(ownerUserId) {
+  const value = String(ownerUserId || "").trim();
+  return value || DEMO_USER_ID;
+}
 
 function slugify(input) {
   return input
@@ -32,11 +45,14 @@ export class MemoryProjectsRepository {
     this.mode = "memory";
   }
 
-  async list() {
-    return [...this.items].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  async list({ ownerUserId = null } = {}) {
+    const scope = ownerUserId ? resolveOwner(ownerUserId) : null;
+    return [...this.items]
+      .filter((item) => (scope ? item.ownerUserId === scope : true))
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
   }
 
-  async create({ name, description = null }) {
+  async create({ name, description = null, ownerUserId = null }) {
     const now = new Date().toISOString();
     const project = {
       id: `project_${crypto.randomUUID()}`,
@@ -45,7 +61,7 @@ export class MemoryProjectsRepository {
       slug: slugify(name) || `project-${Date.now()}`,
       description,
       status: "draft",
-      ownerUserId: DEMO_OWNER_USER_ID,
+      ownerUserId: resolveOwner(ownerUserId),
       metadata: {},
       createdAt: now,
       updatedAt: now,
@@ -61,7 +77,14 @@ export class PostgresProjectsRepository {
     this.mode = "postgres";
   }
 
-  async list() {
+  async list({ ownerUserId = null } = {}) {
+    // 有 ownerUserId 时按归属过滤，实现用户隔离；不传则返回全部（兼容旧调用）。
+    const params = [];
+    let where = "";
+    if (ownerUserId) {
+      params.push(resolveOwner(ownerUserId));
+      where = `where owner_user_id = $${params.length}`;
+    }
     const result = await this.pool.query(
       `select
          id,
@@ -75,12 +98,15 @@ export class PostgresProjectsRepository {
          created_at,
          updated_at
        from content_platform.projects
+       ${where}
        order by created_at desc`,
+      params,
     );
     return result.rows.map(mapProjectRow);
   }
 
-  async create({ name, description = null }) {
+  async create({ name, description = null, ownerUserId = null }) {
+    const owner = resolveOwner(ownerUserId);
     const id = `project_${crypto.randomUUID()}`;
     const projectNo = `P_${Date.now()}`;
     const baseSlug = slugify(name) || `project-${Date.now()}`;
@@ -113,7 +139,7 @@ export class PostgresProjectsRepository {
            metadata,
            created_at,
            updated_at`,
-        [id, projectNo, name, slug, description, DEMO_OWNER_USER_ID],
+        [id, projectNo, name, slug, description, owner],
       );
 
       await client.query(
@@ -126,7 +152,7 @@ export class PostgresProjectsRepository {
          )
          values ($1, $2, $3, 'owner', 'active')
          on conflict (project_id, user_id) do nothing`,
-        [`pm_${crypto.randomUUID()}`, id, DEMO_OWNER_USER_ID],
+        [`pm_${crypto.randomUUID()}`, id, owner],
       );
 
       await client.query(

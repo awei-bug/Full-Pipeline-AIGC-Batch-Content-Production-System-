@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
-    "test": "node --test src/services/creation-request-service.test.js src/services/import-batch-service.test.js src/services/products-service.test.js src/services/content-job-service.test.js src/services/task-event-service.test.js src/services/batch-item-event-service.test.js src/services/content-export-service.test.js src/routes/batch-item-events.test.js"
+    "test": "node --test src/services/creation-request-service.test.js src/services/import-batch-service.test.js src/services/products-service.test.js src/services/content-job-service.test.js src/services/task-event-service.test.js src/services/batch-item-event-service.test.js src/services/content-export-service.test.js src/routes/batch-item-events.test.js src/lib/identity.test.js src/routes/auth.test.js"
   },
   "dependencies": {
     "cors": "^2.8.5",
