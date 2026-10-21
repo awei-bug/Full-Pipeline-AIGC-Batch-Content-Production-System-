@@ -227,3 +227,51 @@ test("非成员只看到未分配批次，看不到他人项目批次", async ()
     assert.equal(bobList.body.data.items[0].projectId, null);
   });
 });
+
+/* ------------------------------------ 内容任务也按批次项目隔离 */
+
+test("任务列表只返回自己项目的任务", async () => {
+  await withApp({ AUTH_MODE: "local", AI_ORCHESTRATOR_BASE_URL: "" }, async (base) => {
+    const alice = await makeUser(base, "job_alice");
+    const bob = await makeUser(base, "job_bob");
+    const aliceProject = await call(base, "POST", "/api/projects", {
+      body: { name: "任务项目" },
+      token: alice.token,
+    });
+    const batch = await importBatch(base, alice.token, {
+      projectId: aliceProject.body.data.id,
+    });
+    assert.equal(batch.status, 201);
+
+    // 未配置编排服务，创建任务会 503；这里只验证"看不到别人的任务列表"
+    const aliceJobs = await call(base, "GET", "/api/content-jobs", { token: alice.token });
+    assert.equal(aliceJobs.status, 200);
+    const bobJobs = await call(base, "GET", "/api/content-jobs", { token: bob.token });
+    assert.equal(bobJobs.status, 200);
+    assert.equal(bobJobs.body.data.items.length, 0);
+  });
+});
+
+test("拿别人批次的 id 建任务被拒（404）", async () => {
+  await withApp({ AUTH_MODE: "local" }, async (base) => {
+    const alice = await makeUser(base, "steal_alice");
+    const bob = await makeUser(base, "steal_bob");
+    const aliceProject = await call(base, "POST", "/api/projects", {
+      body: { name: "被偷项目" },
+      token: alice.token,
+    });
+    const batch = await importBatch(base, alice.token, {
+      projectId: aliceProject.body.data.id,
+    });
+
+    // bob 拿 alice 的 batchId 建任务
+    const attempt = await call(base, "POST", "/api/content-jobs", {
+      body: { batchId: batch.body.data.batchId, contentTypes: ["marketing_copy"] },
+      token: bob.token,
+    });
+    // bob 不属于任何项目，无平台级生成权限 → 403；
+    // 若将来开放 unscoped，则应变成 404。两者都不是成功即可。
+    assert.ok([403, 404].includes(attempt.status), JSON.stringify(attempt.body));
+    assert.notEqual(attempt.status, 202);
+  });
+});

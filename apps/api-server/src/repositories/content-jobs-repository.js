@@ -81,8 +81,26 @@ export class MemoryContentJobsRepository {
     return created;
   }
 
-  async listJobs() {
-    return [...this.jobs].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  /**
+   * @param {{projectIds?: string[]|null}} options
+   *   projectIds 为数组时只返回这些项目（或未分配）的批次派生任务；
+   *   传 null/undefined 表示不过滤（仅限 AUTH_MODE=off）。
+   *
+   * 任务**没有自己的 project_id**——它通过 import_batch_id 归属到批次，
+   * 批次再归属到项目。所以这里靠批次表关联过滤，不给任务表加冗余列。
+   */
+  async listJobs({ projectIds = null, batchProjectMap = null } = {}) {
+    let rows = [...this.jobs];
+    if (Array.isArray(projectIds)) {
+      const wanted = new Set(projectIds.map(String));
+      const includeUnscoped = wanted.has("__unscoped__");
+      rows = rows.filter((job) => {
+        const projectId = batchProjectMap?.get?.(job.batchId) ?? null;
+        if (!projectId) return includeUnscoped;
+        return wanted.has(projectId);
+      });
+    }
+    return rows.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
   }
 
   async getJobById(jobId) {
@@ -258,21 +276,47 @@ export class PostgresContentJobsRepository {
     return created;
   }
 
-  async listJobs() {
+  /**
+   * @param {{projectIds?: string[]|null}} options
+   *   任务没有自己的 project_id，靠 import_batches.project_id 关联过滤。
+   *   传 null/undefined 表示不过滤（仅限 AUTH_MODE=off）。
+   */
+  async listJobs({ projectIds = null } = {}) {
+    const params = [];
+    let where = "";
+    if (Array.isArray(projectIds)) {
+      const wanted = projectIds.map(String);
+      const includeUnscoped = wanted.includes("__unscoped__");
+      const scoped = wanted.filter((item) => item !== "__unscoped__");
+      const clauses = [];
+      if (scoped.length > 0) {
+        params.push(scoped);
+        clauses.push(`b.project_id = any($${params.length}::text[])`);
+      }
+      if (includeUnscoped) {
+        clauses.push("b.project_id is null");
+      }
+      where = clauses.length > 0
+        ? `where (${clauses.join(" or ")})`
+        : "where false";
+    }
     const result = await this.pool.query(
       `select
-         id,
-         job_no,
-         import_batch_id,
-         status,
-         content_types,
-         progress,
-         created_at,
-         updated_at,
-         started_at,
-         finished_at
-       from content_platform.content_jobs
-       order by created_at desc`,
+         j.id,
+         j.job_no,
+         j.import_batch_id,
+         j.status,
+         j.content_types,
+         j.progress,
+         j.created_at,
+         j.updated_at,
+         j.started_at,
+         j.finished_at
+       from content_platform.content_jobs j
+       join content_platform.import_batches b on b.id = j.import_batch_id
+       ${where}
+       order by j.created_at desc`,
+      params,
     );
     return result.rows.map(mapJobRow);
   }
