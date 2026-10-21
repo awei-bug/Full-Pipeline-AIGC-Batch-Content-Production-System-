@@ -1,8 +1,13 @@
 import express from "express";
 
+import { ACTIONS, requirePlatformPermission } from "../lib/permissions.js";
+
 export const contentWorkflowsRouter = express.Router();
 
-contentWorkflowsRouter.post("/", async (request, response, next) => {
+// 内容工作流不绑定项目，按平台级生成权限保护。
+const requireGenerate = requirePlatformPermission({ action: ACTIONS.PLATFORM_GENERATE });
+
+contentWorkflowsRouter.post("/", requireGenerate, async (request, response, next) => {
   try {
     const orchestratorClient = request.app.locals.aiOrchestratorClient;
     if (!orchestratorClient?.submitContentWorkflow) {

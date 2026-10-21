@@ -17,6 +17,7 @@ import test from "node:test";
 
 import {
   ACTIONS,
+  PLATFORM_ACTIONS,
   ROLES,
   actionsForRole,
   can,
@@ -80,5 +81,33 @@ test("evaluateAccess 在非 off 且无成员记录时拒绝", () => {
 test("每个已知角色至少有一个权限点（防止配置成空集）", () => {
   for (const role of Object.values(ROLES)) {
     assert.ok(actionsForRole(role).length > 0, `${role} 权限集为空`);
+  }
+});
+
+/* ------------------------------------- 平台级权限点（无项目维度的资源） */
+
+test("平台级权限点被注册在 PLATFORM_ACTIONS 里", () => {
+  for (const action of [ACTIONS.PLATFORM_IMPORT, ACTIONS.PLATFORM_GENERATE, ACTIONS.PLATFORM_AI_CHAT]) {
+    assert.ok(PLATFORM_ACTIONS.has(action), `${action} 未登记为平台级`);
+  }
+});
+
+test("项目级权限点不在 PLATFORM_ACTIONS 里（避免误用）", () => {
+  for (const action of [ACTIONS.MEMBER_WRITE, ACTIONS.CONTENT_PUBLISH]) {
+    assert.equal(PLATFORM_ACTIONS.has(action), false, `${action} 不该是平台级`);
+  }
+});
+
+test("editor 可做平台级生成与导入，但不能发布", () => {
+  assert.equal(can(ROLES.editor, ACTIONS.PLATFORM_GENERATE).allowed, true);
+  assert.equal(can(ROLES.editor, ACTIONS.PLATFORM_IMPORT).allowed, true);
+  assert.equal(can(ROLES.editor, ACTIONS.PLATFORM_AI_CHAT).allowed, true);
+  // 发布仍需 owner：这是对外动作，不因是"平台级"而放宽
+  assert.equal(can(ROLES.editor, ACTIONS.CONTENT_PUBLISH).allowed, false);
+});
+
+test("viewer 不能做任何平台级写动作", () => {
+  for (const action of [ACTIONS.PLATFORM_IMPORT, ACTIONS.PLATFORM_GENERATE, ACTIONS.PLATFORM_AI_CHAT]) {
+    assert.equal(can(ROLES.viewer, action).allowed, false, `viewer 不应有 ${action}`);
   }
 });

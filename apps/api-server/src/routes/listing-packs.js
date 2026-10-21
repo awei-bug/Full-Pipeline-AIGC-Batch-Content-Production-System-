@@ -1,6 +1,12 @@
 import express from "express";
 
+import { ACTIONS, requirePlatformPermission } from "../lib/permissions.js";
+
 export const listingPacksRouter = express.Router();
+
+// 推送到商城是对外动作，与 data-hub /sync 同级风险：只允许 owner。
+// 下载成品包（GET /:jobId）与生成包（POST /:jobId）不在此列，它们是普通生产动作。
+const requirePublish = requirePlatformPermission({ action: ACTIONS.CONTENT_PUBLISH });
 
 function parsePrices(value) {
   if (!value) {
@@ -87,7 +93,7 @@ listingPacksRouter.get("/:jobId/preview", async (request, response, next) => {
   }
 });
 
-listingPacksRouter.post("/:jobId/push", async (request, response, next) => {
+listingPacksRouter.post("/:jobId/push", requirePublish, async (request, response, next) => {
   try {
     const service = request.app.locals.listingPackService;
     const commerceClient = request.app.locals.commerceIntegrationClient;

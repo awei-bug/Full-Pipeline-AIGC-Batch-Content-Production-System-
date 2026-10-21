@@ -206,6 +206,47 @@ $env:AUTH_SECRET="至少16位的随机字符串"   # 不配置则登录接口 fa
 `AUTH_MODE=off` 时权限检查放行并标记 `bypass`——本地单用户演示里"权限"没有意义，
 强加检查只会破坏既有使用方式。
 
+### 平台级资源：为什么有第二类权限点
+
+`import_batches` / `content_jobs` / `products` 这几张表**没有 `project_id`**
+（见 `infra/sql/005_import_batch_domain.sql`），只按 `batch_id` 关联，是平台级共享资源。
+
+本可以给它们加 `project_id` 后套项目级校验，但那是独立的数据迁移工作（加列 + 回填 +
+改所有读写路径）。在权限这一轮里硬塞，只能靠"猜一个 project id"，那是**假的隔离**——
+看起来有隔离，实际拦不住任何东西，比诚实标注为平台级更危险。
+
+因此用独立权限点：
+
+| 权限点 | 含义 | owner | editor | viewer |
+| --- | --- | --- | --- | --- |
+| `platform:import` | 导入商品批次 | ✓ | ✓ | — |
+| `platform:generate` | 创建内容任务 / 工作流 | ✓ | ✓ | — |
+| `platform:ai_chat` | AI 对话 | ✓ | ✓ | — |
+| `content:publish` | 发布 / 推送商城 / data-hub sync | ✓ | — | — |
+
+已挂上守卫的路由：
+
+| 路由 | 权限点 | 类型 |
+| --- | --- | --- |
+| `POST /api/content-jobs` | `platform:generate` | 平台级 |
+| `POST /api/content-workflows` | `platform:generate` | 平台级 |
+| `POST /api/import-batches` | `platform:import` | 平台级 |
+| `POST /api/chat` | `platform:ai_chat` | 平台级 |
+| `POST /api/data-hub/jobs/:id/ingest` | `platform:generate` | 平台级 |
+| `POST /api/data-hub/jobs/:id/sync` | `content:publish` | 平台级（会对外上架） |
+| `POST /api/listing-packs/:id/push` | `content:publish` | 平台级 |
+| `POST /api/creation-requests` | `content:write` | **项目级**（body 带 projectId） |
+| `POST/PUT/DELETE /api/projects/:id/members` | `member:write` | **项目级** |
+
+`GET /api/data-hub/search` 是只读检索，刻意不挂写权限。
+
+**平台级角色从哪来**：请求头 `X-Content-Role`（前端在选定项目后带上）。
+**未声明或角色未知时一律按 `viewer` 处理**——宁可少放行，也不做"扫所有项目取最高角色"
+这类隐式放宽，那种逻辑很难审计。
+
+将来若要把批次/任务真正纳入项目隔离，需要给表加 `project_id` 并回填，
+那是独立的一轮工作，不该和权限改动混在一起。
+
 ## 前端权限显示
 
 后端能正确拒绝越权，但前端如果还把所有按钮给所有人看，用户点了才吃 403 ——体验差，

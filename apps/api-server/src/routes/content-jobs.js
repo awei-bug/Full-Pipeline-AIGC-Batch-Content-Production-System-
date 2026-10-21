@@ -1,8 +1,13 @@
 import express from "express";
 
+import { ACTIONS, requirePlatformPermission } from "../lib/permissions.js";
 import { createContentJobService } from "../services/content-job-service.js";
 
 export const contentJobsRouter = express.Router();
+
+// content_jobs 没有 project_id（见 infra/sql/005），是平台级资源：
+// 用平台级权限点，而不是伪造一个 projectId 来做"假的隔离"。
+const requireGenerate = requirePlatformPermission({ action: ACTIONS.PLATFORM_GENERATE });
 
 contentJobsRouter.get("/", async (request, response, next) => {
   try {
@@ -17,7 +22,7 @@ contentJobsRouter.get("/", async (request, response, next) => {
   }
 });
 
-contentJobsRouter.post("/", async (request, response, next) => {
+contentJobsRouter.post("/", requireGenerate, async (request, response, next) => {
   try {
     const orchestratorClient = request.app.locals.aiOrchestratorClient;
     if (!orchestratorClient) {

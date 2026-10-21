@@ -1,6 +1,16 @@
 import express from "express";
 
+import { ACTIONS, requirePlatformPermission } from "../lib/permissions.js";
+
 export const dataHubRouter = express.Router();
+
+// 注意区分：
+// - `/search` 只是读检索，不挂写权限；
+// - `/ingest` 写入权威源，按平台级生成权限；
+// - `/sync` 带 publish 时会触发对外上架，与 /api/listing-packs/:jobId/push 同级风险，
+//   因此同样按发布权限（只给 owner）处理，而不是普通的生成权限。
+const requireHubIngest = requirePlatformPermission({ action: ACTIONS.PLATFORM_GENERATE });
+const requireHubPublish = requirePlatformPermission({ action: ACTIONS.CONTENT_PUBLISH });
 
 function requireClient(request, response) {
   const client = request.app.locals.dataHubClient;
@@ -78,7 +88,7 @@ dataHubRouter.post("/search", async (request, response, next) => {
   }
 });
 
-dataHubRouter.post("/jobs/:jobId/ingest", async (request, response, next) => {
+dataHubRouter.post("/jobs/:jobId/ingest", requireHubIngest, async (request, response, next) => {
   const client = requireClient(request, response);
   if (!client) {
     return;
@@ -104,7 +114,7 @@ dataHubRouter.post("/jobs/:jobId/ingest", async (request, response, next) => {
   }
 });
 
-dataHubRouter.post("/jobs/:jobId/sync", async (request, response, next) => {
+dataHubRouter.post("/jobs/:jobId/sync", requireHubPublish, async (request, response, next) => {
   const client = requireClient(request, response);
   if (!client) {
     return;

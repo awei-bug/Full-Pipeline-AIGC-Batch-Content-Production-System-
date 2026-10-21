@@ -1,9 +1,17 @@
 import express from "express";
+
+import { ACTIONS, requireProjectPermission } from "../lib/permissions.js";
 import { submitCreationRequest } from "../services/creation-request-service.js";
 
 export const creationRequestsRouter = express.Router();
 
-creationRequestsRouter.post("/", async (request, response, next) => {
+// 这个路由的 body 里就有 projectId，可以做真正的项目级校验。
+const requireContentWrite = requireProjectPermission({
+  action: ACTIONS.CONTENT_WRITE,
+  resolveProjectId: (request) => String(request.body?.projectId || "").trim() || null,
+});
+
+creationRequestsRouter.post("/", requireContentWrite, async (request, response, next) => {
   try {
     const prompt = String(request.body?.prompt || "").trim();
     const projectId = String(request.body?.projectId || "").trim();

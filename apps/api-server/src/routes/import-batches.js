@@ -1,8 +1,12 @@
 import express from "express";
 
+import { ACTIONS, requirePlatformPermission } from "../lib/permissions.js";
 import { createImportBatchService } from "../services/import-batch-service.js";
 
 export const importBatchesRouter = express.Router();
+
+// import_batches 同样没有 project_id，按平台级资源处理。
+const requireImport = requirePlatformPermission({ action: ACTIONS.PLATFORM_IMPORT });
 
 importBatchesRouter.get("/", async (request, response, next) => {
   try {
@@ -18,7 +22,7 @@ importBatchesRouter.get("/", async (request, response, next) => {
   }
 });
 
-importBatchesRouter.post("/", async (request, response, next) => {
+importBatchesRouter.post("/", requireImport, async (request, response, next) => {
   try {
     const service = createImportBatchService({
       repository: request.app.locals.importBatchesRepository,

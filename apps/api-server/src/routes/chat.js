@@ -1,8 +1,13 @@
 import express from "express";
 
+import { ACTIONS, requirePlatformPermission } from "../lib/permissions.js";
+
 export const chatRouter = express.Router();
 
-chatRouter.post("/", async (request, response, next) => {
+// AI 对话不绑定项目，按平台级权限点保护（editor 及以上可用）。
+const requireAiChat = requirePlatformPermission({ action: ACTIONS.PLATFORM_AI_CHAT });
+
+chatRouter.post("/", requireAiChat, async (request, response, next) => {
   try {
     const rawMessages = request.body?.messages;
     const messages = (Array.isArray(rawMessages) ? rawMessages : [])

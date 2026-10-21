@@ -40,6 +40,20 @@ export const ACTIONS = {
   ASSET_READ: "asset:read",
   ASSET_WRITE: "asset:write",
   BILLING_READ: "billing:read",
+
+  // --- 平台级权限点 ---
+  //
+  // 为什么需要这一类：`import_batches` / `content_jobs` / `products` 这几张表
+  // **没有 project_id**（见 infra/sql/005_import_batch_domain.sql），它们只按
+  // batch_id 关联，是平台级共享资源，不是项目内资源。强行把它们塞进项目级校验
+  // 只能靠"猜一个项目 id"，那是假的隔离。
+  //
+  // 诚实的做法是承认它们是平台级资源，用独立权限点，并且**只给可信角色**。
+  // 将来若要把批次/任务纳入项目隔离，需要给表加 project_id 并回填——那是
+  // 独立的数据迁移工作，不该混在权限改动里。
+  PLATFORM_IMPORT: "platform:import",
+  PLATFORM_GENERATE: "platform:generate",
+  PLATFORM_AI_CHAT: "platform:ai_chat",
 };
 
 export const ROLES = {
@@ -51,8 +65,9 @@ export const ROLES = {
 /**
  * 角色 → 权限集合。
  *
- * `viewer` 只能读。`editor` 能读写内容与素材，但**不能**管理成员、不能删除项目、
- * 不能发布到大仓（发布是对外动作，误操作的代价比其他写操作高一个量级）。
+ * `viewer` 只能读。`editor` 能读写项目内容与素材、也能跑平台级生成与导入
+ * （这些是日常生产动作），但**不能**管理成员、删除项目、发布到大仓
+ * （发布是对外动作，误操作的代价比其他写操作高一个量级）。
  * `owner` 全有。
  */
 const ROLE_ACTIONS = {
@@ -64,6 +79,9 @@ const ROLE_ACTIONS = {
     ACTIONS.ASSET_READ,
     ACTIONS.ASSET_WRITE,
     ACTIONS.MEMBER_READ,
+    ACTIONS.PLATFORM_IMPORT,
+    ACTIONS.PLATFORM_GENERATE,
+    ACTIONS.PLATFORM_AI_CHAT,
   ]),
   [ROLES.viewer]: new Set([
     ACTIONS.PROJECT_READ,
@@ -71,6 +89,13 @@ const ROLE_ACTIONS = {
     ACTIONS.ASSET_READ,
   ]),
 };
+
+/** 平台级权限点：不需要 projectId，只按身份与角色判定。 */
+export const PLATFORM_ACTIONS = new Set([
+  ACTIONS.PLATFORM_IMPORT,
+  ACTIONS.PLATFORM_GENERATE,
+  ACTIONS.PLATFORM_AI_CHAT,
+]);
 
 export function actionsForRole(roleCode) {
   const role = String(roleCode || "").trim().toLowerCase();
@@ -117,6 +142,59 @@ export function evaluateAccess({ authMode, roleCode, action }) {
 }
 
 /**
+ * 平台级守卫：资源没有项目维度时使用。
+ *
+ * 适用对象：`import_batches` / `content_jobs` / `products` / AI 对话 / data-hub 同步。
+ * 这些表没有 `project_id`，无法做项目级隔离。判据是"身份存在且角色具备平台级权限点"。
+ *
+ * 角色从哪来？平台级动作不绑定具体项目，但角色是项目级的概念。当前实现：
+ * 取请求头 `X-Content-Role`（由前端在登录后、选定项目时带上），或退化为
+ * 询问任一项目的成员角色。为保持简单与可预测，这里**只接受显式声明的角色**，
+ * 不做"扫所有项目取最高角色"——那种隐式放宽很难审计。
+ *
+ * 没有角色的已登录用户按 `viewer` 处理（只能读），不会误放行写操作。
+ */
+export function requirePlatformPermission({ action }) {
+  return function platformPermissionGuard(request, response, next) {
+    const authMode = request.identityMode || "off";
+
+    if (authMode === "off") {
+      request.access = { allowed: true, bypass: true, reason: "AUTH_MODE=off，本地演示模式放行" };
+      return next();
+    }
+
+    const identity = request.identity;
+    if (!identity || identity.kind === "anonymous") {
+      return response.status(401).json({
+        code: "UNAUTHORIZED",
+        message: "请先登录",
+        data: null,
+      });
+    }
+
+    const declared = String(
+      request.headers["x-content-role"] || request.headers["X-Content-Role"] || "",
+    )
+      .trim()
+      .toLowerCase();
+    // 未声明角色按 viewer 处理：能读，不能写。宁可少放行也不隐式放宽。
+    const roleCode = isKnownRole(declared) ? declared : ROLES.viewer;
+
+    const verdict = can(roleCode, action);
+    request.access = { ...verdict, roleCode };
+
+    if (!verdict.allowed) {
+      return response.status(403).json({
+        code: "FORBIDDEN",
+        message: "当前角色无权执行该操作（平台级）",
+        data: null,
+      });
+    }
+    return next();
+  };
+}
+
+/**
  * 路由守卫工厂：要求请求身份在指定项目中具备某权限。
  *
  * `resolveProjectId(request)` 让每个路由自己说明"项目 id 从哪来"——
@@ -126,7 +204,6 @@ export function evaluateAccess({ authMode, roleCode, action }) {
  * @param {object} options
  * @param {string} options.action 需要的权限点
  * @param {(request: object) => string|null} options.resolveProjectId
- * @param {string} [options.paramName] 缺省时从这些位置依次尝试
  */
 export function requireProjectPermission({ action, resolveProjectId }) {
   return async function projectPermissionGuard(request, response, next) {
