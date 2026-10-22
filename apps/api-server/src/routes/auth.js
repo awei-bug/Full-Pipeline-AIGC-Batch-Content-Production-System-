@@ -210,3 +210,40 @@ authRouter.get("/me/projects", async (request, response, next) => {
     next(error);
   }
 });
+
+/**
+ * 当前用户的额度余额与计费单价。
+ *
+ * 前端在调用付费接口前可以先查这里，或在 402 后引导充值。
+ * 单价一并返回，让前端能显示"本次约消耗 N 点"。
+ */
+authRouter.get("/me/credits", async (request, response, next) => {
+  try {
+    if (!requireEnabled(request, response)) return;
+    const identity = request.identity;
+    if (!identity || identity.kind === "anonymous") {
+      return fail(response, 401, "UNAUTHORIZED", "请先登录");
+    }
+
+    const repository = request.app.locals.creditRepository;
+    if (!repository) {
+      return fail(response, 503, "SERVICE_UNAVAILABLE", "额度服务未初始化");
+    }
+
+    const balance = await repository.getBalance(identity.userId);
+    const env = request.app.locals.env || process.env;
+    const { resolveCosts } = await import("../lib/billing.js");
+
+    response.json({
+      code: "SUCCESS",
+      message: "成功",
+      data: {
+        ...balance,
+        costs: resolveCosts(env),
+        mode: repository.mode || "unknown",
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+});

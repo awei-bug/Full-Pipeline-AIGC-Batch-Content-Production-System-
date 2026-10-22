@@ -29,6 +29,7 @@ import { membersRouter } from "./routes/members.js";
 import { createIdentityMiddleware, resolveAuthMode } from "./lib/identity.js";
 import { verifyToken } from "./lib/local-auth.js";
 import { createUsersRepository } from "./repositories/users-repository.js";
+import { createCreditRepository } from "./repositories/credits-repository.js";
 import { MemoryProjectsRepository, PostgresProjectsRepository } from "./repositories/projects-repository.js";
 import {
   MemoryImportBatchesRepository,
@@ -67,6 +68,8 @@ export async function buildApp({ env = process.env } = {}) {
     : new MemoryContentJobsRepository(productsRepository);
   const workflowRepository = pool ? new PostgresWorkflowRepository(pool) : new MemoryWorkflowRepository();
   const usersRepository = createUsersRepository(pool);
+  // 额度仓储：无数据库时用内存实现（重启丢额度，仅供本地演示）。
+  const creditRepository = createCreditRepository(pool, { env });
   const aiOrchestratorClient = createAiOrchestratorClient(env);
   const listingPackService = createListingPackService({
     repository: contentJobsRepository,
@@ -90,6 +93,7 @@ export async function buildApp({ env = process.env } = {}) {
   app.locals.workflowRepository = workflowRepository;
   app.locals.aiOrchestratorClient = aiOrchestratorClient;
   app.locals.usersRepository = usersRepository;
+  app.locals.creditRepository = creditRepository;
   // 路由层需要读 AUTH_MODE / AUTH_SECRET；显式挂到 locals，避免各处直接摸 process.env。
   app.locals.env = env;
 
