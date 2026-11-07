@@ -142,6 +142,25 @@ export function clearSession() {
 }
 
 /**
+ * 宿主统一会话桥接。被 iframe 承载时，登录令牌由宿主下发，登出由宿主广播；
+ * 只接受宿主 origin 且来自父窗口的消息，避免任意页面注入令牌。
+ */
+const UNIFIED_HOST_ORIGIN = "http://127.0.0.1:8080";
+
+if (typeof window !== "undefined") {
+  window.addEventListener("message", (event) => {
+    if (event.origin !== UNIFIED_HOST_ORIGIN || event.source !== window.parent) return;
+    const payload = event.data;
+    if (!payload || typeof payload !== "object") return;
+    if (payload.type === "unified:session" && typeof payload.token === "string") {
+      saveSession({ token: payload.token });
+    } else if (payload.type === "unified:logout") {
+      clearSession();
+    }
+  });
+}
+
+/**
  * 从统一会话响应里取 token。
  *
  * 云购的 Flask-RESTful 响应把业务体放在 `data` 里，且**业务状态在 body.status**
