@@ -30,6 +30,11 @@ const DDL = [
    )`,
   `CREATE INDEX IF NOT EXISTS ix_inventory_drafts_tenant
      ON inventory_content_drafts (tenant_id, id DESC)`,
+  // 商品身份与回推状态。表已存在时 CREATE TABLE IF NOT EXISTS 不会补列，
+  // 因此单独 ALTER：老库升级与新库初始化走同一条路径。
+  `ALTER TABLE inventory_content_drafts ADD COLUMN IF NOT EXISTS external_id TEXT`,
+  `ALTER TABLE inventory_content_drafts ADD COLUMN IF NOT EXISTS hub_status TEXT NOT NULL DEFAULT 'local'`,
+  `ALTER TABLE inventory_content_drafts ADD COLUMN IF NOT EXISTS hub_pushed_at TIMESTAMPTZ`,
   `CREATE TABLE IF NOT EXISTS inventory_draft_watermark (
      consumer TEXT PRIMARY KEY,
      last_event_id BIGINT NOT NULL DEFAULT 0,
@@ -69,8 +74,8 @@ export function createInventoryDraftsRepository(pool) {
     const result = await pool.query(
       `INSERT INTO inventory_content_drafts
          (tenant_id, event_id, product_id, sku_id, item_title, stock_after,
-          threshold, kind, title, body, source)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+          threshold, kind, title, body, source, external_id, hub_status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
        ON CONFLICT (event_id) DO NOTHING
        RETURNING id`,
       [
@@ -85,6 +90,8 @@ export function createInventoryDraftsRepository(pool) {
         String(draft.title),
         String(draft.body),
         String(draft.source || "yungou.stock.changed"),
+        draft.externalId == null ? null : String(draft.externalId),
+        draft.externalId ? "pending_push" : "pending_mapping",
       ],
     );
     return {
@@ -108,7 +115,8 @@ export function createInventoryDraftsRepository(pool) {
     params.push(Math.min(Math.max(toInt(limit) || 50, 1), 200));
     const result = await pool.query(
       `SELECT id, tenant_id, event_id, product_id, sku_id, item_title, stock_after,
-              threshold, kind, status, title, body, source, created_at
+              threshold, kind, status, title, body, source, external_id,
+              hub_status, hub_pushed_at, created_at
          FROM inventory_content_drafts
          ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
         ORDER BY id DESC
@@ -129,6 +137,9 @@ export function createInventoryDraftsRepository(pool) {
       title: row.title,
       body: row.body,
       source: row.source,
+      externalId: row.external_id,
+      hubStatus: row.hub_status,
+      hubPushedAt: row.hub_pushed_at instanceof Date ? row.hub_pushed_at.toISOString() : row.hub_pushed_at,
       createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
     }));
   }
@@ -153,5 +164,25 @@ export function createInventoryDraftsRepository(pool) {
     );
   }
 
-  return { mode: "postgres", ensure, insertDraft, listDrafts, getWatermark, setWatermark };
+  async function markHubStatus(id, hubStatus) {
+    await ensure();
+    await pool.query(
+      `UPDATE inventory_content_drafts
+          SET hub_status = $2,
+              hub_pushed_at = CASE WHEN $2 = 'pushed' THEN now() ELSE hub_pushed_at END,
+              updated_at = now()
+        WHERE id = $1`,
+      [toInt(id), String(hubStatus)],
+    );
+  }
+
+  return {
+    mode: "postgres",
+    ensure,
+    insertDraft,
+    listDrafts,
+    getWatermark,
+    setWatermark,
+    markHubStatus,
+  };
 }

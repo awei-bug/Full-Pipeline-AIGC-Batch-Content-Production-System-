@@ -81,6 +81,7 @@ export function buildDraft(event, { threshold = DEFAULT_THRESHOLD } = {}) {
     eventId: toInt(event.id),
     productId,
     skuId: payload.sku_id == null ? null : String(payload.sku_id),
+    externalId: payload.external_id ? String(payload.external_id) : null,
     itemTitle,
     stockAfter,
     threshold,
@@ -89,6 +90,54 @@ export function buildDraft(event, { threshold = DEFAULT_THRESHOLD } = {}) {
     body,
     source: "yungou.stock.changed",
   };
+}
+
+/** 草稿写回数据中心时的标记，用于同一商品的重复草稿覆盖而不是无限追加。 */
+export const DRAFT_MARKER = "【运营提示】";
+const STOCK_POINT_PREFIX = "库存提示：";
+
+/**
+ * 把草稿合并进数据中心返回的商品记录。
+ *
+ * 数据中心 ingest 是整条覆盖语义，所以必须先读后写；只替换 desc_zh 的
+ * 运营提示段与库存卖点，其余字段原样带回，避免把价格、图片、规格冲成空。
+ */
+export function mergeDraftIntoHubItem(record, draft) {
+  const baseDesc = String(record.desc_zh || "").split(DRAFT_MARKER)[0].trim();
+  const desc = `${baseDesc}${baseDesc ? " " : ""}${DRAFT_MARKER}${draft.body}`.slice(0, 4000);
+  const points = (Array.isArray(record.selling_points) ? record.selling_points : [])
+    .map((point) => String(point || "").trim())
+    .filter((point) => point && !point.startsWith(STOCK_POINT_PREFIX));
+  points.push(`${STOCK_POINT_PREFIX}当前仅剩 ${draft.stockAfter} 件`);
+
+  return {
+    ...record,
+    desc_zh: desc,
+    selling_points: points.slice(-10),
+    // 标题/英文描述的生成内容不属于本次改动，交给数据中心保留。
+    preserve_generated_copy: true,
+    source_job_id: `inventory-draft:${draft.eventId}`,
+  };
+}
+
+export async function pushDraftToHub({ draft, hubClient, logger = console } = {}) {
+  if (!draft?.externalId) {
+    return { status: "pending_mapping" };
+  }
+  if (!hubClient) {
+    return { status: "hub_not_configured" };
+  }
+  const record = await hubClient.get({ externalId: draft.externalId });
+  if (!record) {
+    return { status: "hub_missing" };
+  }
+  await hubClient.ingest({
+    items: [mergeDraftIntoHubItem(record, draft)],
+    jobId: `inventory-draft:${draft.eventId}`,
+    source: "inventory_alert",
+  });
+  logger.log?.(`[inventory-drafts] 草稿已回推数据中心 event=${draft.eventId} external=${draft.externalId}`);
+  return { status: "pushed" };
 }
 
 async function fetchEvents({ config, after, fetchImpl }) {
@@ -118,12 +167,13 @@ async function fetchEvents({ config, after, fetchImpl }) {
 export async function consumeOnce({
   env = process.env,
   repository,
+  hubClient = null,
   fetchImpl = globalThis.fetch,
   logger = console,
 } = {}) {
   const config = resolveDraftConsumerConfig(env);
   if (!config.enabled) {
-    return { enabled: false, fetched: 0, created: 0, skipped: 0, watermark: 0 };
+    return { enabled: false, fetched: 0, created: 0, skipped: 0, pushed: 0, watermark: 0 };
   }
   if (!repository) {
     throw new Error("库存草稿消费器缺少仓储");
@@ -134,6 +184,7 @@ export async function consumeOnce({
 
   let created = 0;
   let skipped = 0;
+  let pushed = 0;
   let cursor = watermark;
 
   for (const event of events) {
@@ -149,6 +200,15 @@ export async function consumeOnce({
       if (result.inserted) {
         created += 1;
         logger.log?.(`[inventory-drafts] 新增草稿 event=${eventId} product=${draft.productId} stock=${draft.stockAfter}`);
+        // 回推失败不能让草稿丢失，也不能卡住水位：草稿已落库，状态单独记录。
+        try {
+          const outcome = await pushDraftToHub({ draft, hubClient, logger });
+          await repository.markHubStatus?.(result.id, outcome.status);
+          if (outcome.status === "pushed") pushed += 1;
+        } catch (error) {
+          logger.error?.(`[inventory-drafts] 回推失败 event=${eventId}：${error.message}`);
+          await repository.markHubStatus?.(result.id, "push_failed");
+        }
       } else {
         skipped += 1;
       }
@@ -166,12 +226,13 @@ export async function consumeOnce({
     fetched: events.length,
     created,
     skipped,
+    pushed,
     watermark: cursor,
   };
 }
 
 /** worker 主循环：固定间隔拉取，单轮异常不退出进程。 */
-export async function runLoop({ env = process.env, repository, fetchImpl, logger = console } = {}) {
+export async function runLoop({ env = process.env, repository, hubClient = null, fetchImpl, logger = console } = {}) {
   const config = resolveDraftConsumerConfig(env);
   if (!config.enabled) {
     logger.log?.("[inventory-drafts] 未配置 EVENTS_URL / EVENTS_TOKEN，消费器不启动");
@@ -188,7 +249,7 @@ export async function runLoop({ env = process.env, repository, fetchImpl, logger
 
   while (!stopping) {
     try {
-      await consumeOnce({ env, repository, fetchImpl, logger });
+      await consumeOnce({ env, repository, hubClient, fetchImpl, logger });
     } catch (error) {
       logger.error?.(`[inventory-drafts] 本轮失败：${error.message}`);
     }

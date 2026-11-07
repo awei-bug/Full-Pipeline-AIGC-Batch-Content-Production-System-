@@ -88,6 +88,17 @@ export function createDataHubClient(env = process.env) {
       );
     },
 
+    async get({ externalId }) {
+      if (!externalId) {
+        throw new Error("缺少 externalId");
+      }
+      const payload = await request(
+        "GET",
+        `/hub/products/${encodeURIComponent(config.tenantSlug)}/${encodeURIComponent(externalId)}`,
+      );
+      return payload?.item || null;
+    },
+
     async search({ query, limit = 5, publishedOnly = false }) {
       return request("POST", "/hub/search", {
         tenant_slug: config.tenantSlug,
@@ -97,8 +108,7 @@ export function createDataHubClient(env = process.env) {
       });
     },
 
-    async listProducts({ status = "", limit = 50, since = "" } = {}) {
-      const params = new URLSearchParams();
+    async listProducts({ status = "", limit = 50, since = "" } = {}) {      const params = new URLSearchParams();
       params.set("tenant", config.tenantSlug);
       if (status) params.set("status", status);
       if (since) params.set("since", since);

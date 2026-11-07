@@ -3,17 +3,22 @@ import test from "node:test";
 
 import {
   CONSUMER_NAME,
+  DRAFT_MARKER,
   buildDraft,
   consumeOnce,
+  mergeDraftIntoHubItem,
+  pushDraftToHub,
   resolveDraftConsumerConfig,
 } from "./inventory-draft-consumer.js";
 
 function memoryRepository() {
   const drafts = [];
+  const statuses = new Map();
   const seen = new Set();
   let watermark = 0;
   return {
     drafts,
+    statuses,
     async getWatermark() {
       return watermark;
     },
@@ -25,6 +30,9 @@ function memoryRepository() {
       seen.add(draft.eventId);
       drafts.push(draft);
       return { inserted: true, id: drafts.length };
+    },
+    async markHubStatus(id, status) {
+      statuses.set(id, status);
     },
     get lastEventId() {
       return watermark;
@@ -131,4 +139,119 @@ test("第二次消费从水位之后拉取", async () => {
 
 test("消费者名固定，水位表不会被别的进程覆盖", () => {
   assert.equal(CONSUMER_NAME, "yungou-stock");
+});
+
+test("草稿带上数据中心商品标识", () => {
+  const draft = buildDraft(
+    {
+      id: 12,
+      tenant_id: 1,
+      event_type: "stock.changed",
+      payload: JSON.stringify({
+        product_id: 1,
+        stock_after: 4,
+        item_title: "榨汁杯",
+        external_id: "yg-1-1",
+      }),
+    },
+    { threshold: 10 },
+  );
+  assert.equal(draft.externalId, "yg-1-1");
+});
+
+test("合并草稿只改运营提示与库存卖点，其余字段原样保留", () => {
+  const record = {
+    external_id: "yg-1-1",
+    title: "榨汁杯",
+    price: 129,
+    stock: 4,
+    images: ["http://img/1.png"],
+    desc_zh: `原描述 ${DRAFT_MARKER}旧的提示，应当被替换`,
+    selling_points: ["380ml 容量", "库存提示：当前仅剩 9 件"],
+    status: "approved",
+  };
+  const merged = mergeDraftIntoHubItem(record, {
+    eventId: 13,
+    stockAfter: 4,
+    body: "仅剩 4 件，建议改为预约口径。",
+  });
+
+  assert.equal(merged.price, 129);
+  assert.deepEqual(merged.images, ["http://img/1.png"]);
+  assert.equal(merged.status, "approved");
+  assert.equal(merged.preserve_generated_copy, true);
+  assert.ok(merged.desc_zh.startsWith("原描述"));
+  assert.equal(merged.desc_zh.split(DRAFT_MARKER).length, 2, "旧提示必须被替换而不是叠加");
+  assert.match(merged.desc_zh, /仅剩 4 件/);
+  assert.deepEqual(merged.selling_points, ["380ml 容量", "库存提示：当前仅剩 4 件"]);
+});
+
+test("有标识时把草稿回推数据中心", async () => {
+  const calls = [];
+  const hubClient = {
+    async get({ externalId }) {
+      calls.push(["get", externalId]);
+      return { external_id: externalId, title: "榨汁杯", desc_zh: "原描述", selling_points: [] };
+    },
+    async ingest({ items, jobId, source }) {
+      calls.push(["ingest", jobId, source, items[0].desc_zh]);
+      return { ok: true };
+    },
+  };
+
+  const outcome = await pushDraftToHub({
+    draft: { externalId: "yg-1-1", eventId: 21, stockAfter: 2, body: "仅剩 2 件" },
+    hubClient,
+    logger: { log() {} },
+  });
+
+  assert.equal(outcome.status, "pushed");
+  assert.deepEqual(calls[0], ["get", "yg-1-1"]);
+  assert.equal(calls[1][2], "inventory_alert");
+  assert.match(calls[1][3], /仅剩 2 件/);
+});
+
+test("没有标识时草稿留在本地，不发任何请求", async () => {
+  let called = false;
+  const outcome = await pushDraftToHub({
+    draft: { externalId: null, eventId: 22, stockAfter: 0, body: "缺货" },
+    hubClient: {
+      async get() {
+        called = true;
+        return null;
+      },
+      async ingest() {
+        called = true;
+      },
+    },
+    logger: { log() {} },
+  });
+
+  assert.equal(outcome.status, "pending_mapping");
+  assert.equal(called, false);
+});
+
+test("回推成功后记录 hub_status，失败不丢草稿", async () => {
+  const repo = memoryRepository();
+  const event = {
+    id: 30,
+    tenant_id: 1,
+    event_type: "stock.changed",
+    payload: JSON.stringify({ product_id: 1, stock_after: 1, item_title: "榨汁杯", external_id: "yg-1-1" }),
+  };
+  const hubClient = {
+    async get() {
+      return { external_id: "yg-1-1", title: "榨汁杯", desc_zh: "", selling_points: [] };
+    },
+    async ingest() {
+      throw new Error("数据中心 500");
+    },
+  };
+
+  const result = await consumeOnce({ env: ENV, repository: repo, hubClient, fetchImpl: stubFetch([event]), logger: { log() {}, error() {} } });
+
+  assert.equal(result.created, 1);
+  assert.equal(result.pushed, 0);
+  assert.equal(repo.drafts.length, 1, "回推失败不能丢草稿");
+  assert.equal(repo.statuses.get(1), "push_failed");
 });
