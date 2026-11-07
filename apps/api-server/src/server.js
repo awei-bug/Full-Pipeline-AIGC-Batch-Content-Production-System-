@@ -17,9 +17,11 @@ import { batchItemEventsRouter } from "./routes/batch-item-events.js";
 import { orchestratorEventsRouter } from "./routes/orchestrator-events.js";
 import { listingPacksRouter } from "./routes/listing-packs.js";
 import { dataHubRouter } from "./routes/data-hub.js";
+import { inventoryDraftsRouter } from "./routes/inventory-drafts.js";
 import { createListingPackService } from "./services/listing-pack-service.js";
 import { createDataHubSyncService } from "./services/data-hub-sync-service.js";
 import { createHubSyncStatusRepository } from "./repositories/hub-sync-status-repository.js";
+import { createInventoryDraftsRepository } from "./repositories/inventory-drafts-repository.js";
 import { createCommerceIntegrationClient } from "./lib/commerce-integration-client.js";
 import { createDataHubClient } from "./lib/data-hub-client.js";
 import { createPool, hasDatabaseConfig } from "./lib/database.js";
@@ -91,6 +93,8 @@ export async function buildApp({ env = process.env } = {}) {
   app.locals.dataHubClient = dataHubClient;
   app.locals.dataHubSyncService = dataHubSyncService;
   app.locals.hubSyncStatusRepository = createHubSyncStatusRepository(pool);
+  // 库存事件草稿：由独立 worker 写入，路由只读。无数据库时为 null，接口返回 503。
+  app.locals.inventoryDraftsRepository = createInventoryDraftsRepository(pool);
   app.locals.commerceIntegrationClient = createCommerceIntegrationClient(env);
   app.locals.pool = pool;
   app.locals.projectsRepository = projectsRepository;
@@ -175,6 +179,7 @@ export async function buildApp({ env = process.env } = {}) {
   app.use("/api/content-exports", contentExportsRouter);
   app.use("/api/listing-packs", listingPacksRouter);
   app.use("/api/data-hub", dataHubRouter);
+  app.use("/api/inventory-drafts", inventoryDraftsRouter);
   app.use("/api/creation-requests", creationRequestsRouter);
   app.use("/api/chat", chatRouter);
   app.use("/api/content-workflows", contentWorkflowsRouter);
