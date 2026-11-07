@@ -84,11 +84,14 @@ export function actionsForRole(roleCode) {
  *
  * @param {{authMode: string, roleCode: string|null}} params
  */
-export function buildPermissionView({ authMode = "off", roleCode = null }) {
+export function buildPermissionView({ authMode = "off", roleCode = null, authenticated = false }) {
   const bypass = authMode === "off";
   return {
     bypass,
     roleCode: roleCode || null,
+    // 商家会话是否存在（token），与项目角色是两回事：清空项目后
+    // 已登录用户也没有 roleCode，提示文案需要区分这两种情况。
+    authenticated: bypass || authenticated,
     can(action) {
       if (bypass) return true;
       return can(roleCode, action);
@@ -102,7 +105,7 @@ export function buildPermissionView({ authMode = "off", roleCode = null }) {
 }
 
 /** 无权限时按钮的提示文案。统一出口，避免各处各写一句不一致的话。 */
-export function forbiddenHint(action, roleCode) {
+export function forbiddenHint(action, roleCode, authenticated = false) {
   if (action === ACTIONS.MEMBER_WRITE) {
     return "只有项目 owner 可以管理成员";
   }
@@ -110,7 +113,16 @@ export function forbiddenHint(action, roleCode) {
     return "只有项目 owner 可以发布";
   }
   if (action === ACTIONS.CONTENT_WRITE || action === ACTIONS.ASSET_WRITE) {
-    return roleCode ? `当前角色（${roleCode}）为只读，无法编辑` : "请先登录";
+    if (roleCode) {
+      return `当前角色（${roleCode}）为只读，无法编辑`;
+    }
+    // 已有商家会话但没有项目角色：通常是没有项目，或尚未被加入项目。
+    if (authenticated) {
+      return "已登录商家账号，但尚未加入任何项目；请先由项目管理员把你加入项目成员";
+    }
+    // 没有本地登录这条路了，所以提示必须指向唯一的登录入口，否则用户会在
+    // 本页找一个并不存在的登录框。
+    return "未检测到云购商家会话，请先登录商家后台";
   }
   return "当前角色无权执行该操作";
 }

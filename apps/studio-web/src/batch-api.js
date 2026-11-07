@@ -1,6 +1,6 @@
 import * as XLSX from "xlsx";
 
-import { authHeaders, clearSession } from "./session.js";
+import { MERCHANT_LOGIN_HINT, MERCHANT_LOGIN_URL, authHeaders, clearSession } from "./session.js";
 
 const apiBaseUrl =
   (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_BASE_URL) ||
@@ -10,11 +10,14 @@ export { apiBaseUrl };
 
 const DEFAULT_EXPORT_FILE_NAME = "外贸内容结果.xlsx";
 
+/** 401 的统一文案：指向唯一登录入口，而不是让人在本页找一个不存在的登录框。 */
+const UNAUTHORIZED_HINT = `${MERCHANT_LOGIN_HINT}：${MERCHANT_LOGIN_URL}`;
+
 /**
  * 带鉴权头的请求。
  *
  * 401 与 403 必须分开处理：
- * - 401 = 未登录 / token 过期 → 清掉本地 token，提示重新登录；
+ * - 401 = 没有统一会话 / 会话已失效 → 清掉本地 token，提示去商家后台登录；
  * - 403 = 已登录但角色不足 → **绝不能清 token**，否则用户会莫名其妙被登出，
  *   而且再登录一次结果一样，问题定位会跑偏。
  *
@@ -34,7 +37,7 @@ async function request(path, options = {}) {
 
   if (response.status === 401) {
     clearSession();
-    throw Object.assign(new Error(payload.message || "登录已失效，请重新登录"), {
+    throw Object.assign(new Error(UNAUTHORIZED_HINT), {
       statusCode: 401,
       code: payload.code,
     });
@@ -60,10 +63,10 @@ async function requestBlob(path, options = {}) {
   }
 
   if (!response.ok) {
-    let message = "请求失败";
+    let message = response.status === 401 ? UNAUTHORIZED_HINT : "请求失败";
     try {
       const payload = await response.json();
-      message = payload.message || message;
+      message = response.status === 401 ? UNAUTHORIZED_HINT : payload.message || message;
     } catch {
       // ignore invalid json body
     }
@@ -220,6 +223,9 @@ export function buildFieldMapping(headers) {
     scenario: findHeader(["scenario", "scene", "application", "use", "场景", "用途", "应用"]),
   };
 
+  const stockHeader = findHeader(["stock", "inventory", "库存"]);
+  if (stockHeader) mapping.stock = stockHeader;
+
   if (!mapping.name) {
     throw new Error("未能识别产品名称字段，请检查表头是否包含名称/产品/Name。");
   }
@@ -284,6 +290,14 @@ export async function createContentJob({ batchId, contentTypes }) {
 export async function listContentOutputs(jobId) {
   const result = await request(`/api/content-outputs?jobId=${encodeURIComponent(jobId)}`);
   return result.items || [];
+}
+
+export async function getHubSyncStatus(jobId) {
+  return request(`/api/data-hub/jobs/${encodeURIComponent(jobId)}/status`);
+}
+
+export async function retryHubSync(jobId) {
+  return request(`/api/data-hub/jobs/${encodeURIComponent(jobId)}/ingest`, { method: "POST" });
 }
 
 export async function exportContentJob(jobId) {

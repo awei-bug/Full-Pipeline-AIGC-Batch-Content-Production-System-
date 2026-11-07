@@ -1,8 +1,12 @@
 /**
  * 注册与登录（内容平台 identity 层）。
  *
- * 只在 AUTH_MODE 为 local/strict 时生效。AUTH_MODE=off 时这两个接口明确返回 404，
- * 而不是悄悄可用——否则本地演示环境也能凭空注册账号，误导使用者以为已经有用户体系。
+ * 正式身份来自云购会话（`AUTH_MODE=merchant`），那里这两个本地接口明确返回 404：
+ * 内容平台不该再签发自己的会话，否则同一个商家会有两套互不相认的身份，
+ * 吊销云购会话后内容平台仍能访问。
+ *
+ * 只有显式开启 `AUTH_MODE=local`（开发期遗留）时这两个接口才可用；
+ * `AUTH_MODE=off` 下同样返回 404，避免本地演示环境凭空注册账号。
  */
 
 import express from "express";
@@ -19,18 +23,43 @@ function fail(response, status, code, message) {
   return response.status(status).json({ code, message, data: null });
 }
 
+/**
+ * 注册/登录的开关：只有本地 token 模式才允许内容平台自己签发凭证。
+ * merchant 模式下明确 404——正式身份只能来自云购，不能有第二条登录路径。
+ */
 function requireEnabled(request, response) {
+  const mode = resolveAuthMode(request.app.locals.env || process.env);
+  if (mode !== "local" && mode !== "strict") {
+    fail(
+      response,
+      404,
+      "AUTH_DISABLED",
+      `当前身份来源为 ${mode}，内容平台不签发本地登录凭证。正式环境请使用云购商家登录（AUTH_MODE=merchant）。`,
+    );
+    return null;
+  }
+  return mode;
+}
+
+/**
+ * 只读身份接口（`/me`、`/me/projects`、`/me/credits`）的开关。
+ *
+ * 它们**不签发**任何凭证，只回读当前请求身份与角色，因此在 merchant 模式下必须可用：
+ * 前端靠 `/api/auth/me/projects` 拿服务端权威角色（`session.js` / `PermissionGate.jsx`）。
+ * 这里返回 `{ok: true}` 表示允许继续，身份校验由各处理器自己做（匿名 → 401）。
+ */
+function requireIdentityEndpoint(request, response) {
   const mode = resolveAuthMode(request.app.locals.env || process.env);
   if (mode === "off") {
     fail(
       response,
       404,
       "AUTH_DISABLED",
-      "当前为本地演示模式（AUTH_MODE=off），未启用用户体系。设置 AUTH_MODE=local 并配置 AUTH_SECRET 后可用。",
+      "当前为本地演示模式（AUTH_MODE=off），没有用户体系可查询。",
     );
-    return null;
+    return false;
   }
-  return mode;
+  return true;
 }
 
 function authSecret(request) {
@@ -141,7 +170,7 @@ authRouter.post("/login", async (request, response, next) => {
 
 authRouter.get("/me", async (request, response, next) => {
   try {
-    if (!requireEnabled(request, response)) return;
+    if (!requireIdentityEndpoint(request, response)) return;
     const identity = request.identity;
     if (!identity || identity.kind === "anonymous") {
       return fail(response, 401, "UNAUTHORIZED", "未登录");
@@ -180,7 +209,7 @@ authRouter.get("/me", async (request, response, next) => {
  */
 authRouter.get("/me/projects", async (request, response, next) => {
   try {
-    if (!requireEnabled(request, response)) return;
+    if (!requireIdentityEndpoint(request, response)) return;
     const identity = request.identity;
     if (!identity || identity.kind === "anonymous") {
       return fail(response, 401, "UNAUTHORIZED", "请先登录");
@@ -219,7 +248,7 @@ authRouter.get("/me/projects", async (request, response, next) => {
  */
 authRouter.get("/me/credits", async (request, response, next) => {
   try {
-    if (!requireEnabled(request, response)) return;
+    if (!requireIdentityEndpoint(request, response)) return;
     const identity = request.identity;
     if (!identity || identity.kind === "anonymous") {
       return fail(response, 401, "UNAUTHORIZED", "请先登录");

@@ -21,11 +21,18 @@
  *
  * 与 AUTH_MODE=off 的关系
  * ----------------------
- * `off` 模式下没有真实身份，所有检查放行并标记 `bypass=true`。理由：这个模式
- * 服务于双击启动的本地单用户演示，那里"权限"没有意义；强加检查只会让既有使用
- * 方式坏掉。但**检查本身仍然记录**（`reason` 字段），便于在测试里断言哪些动作
- * 被放行过——不做静默的"假放行"。
+ * `off` 是**显式开启的本地演示后门**：该模式下没有真实身份，所有检查放行并标记
+ * `bypass=true`，但检查本身仍然记录（`reason` 字段），便于测试断言哪些动作被放行过。
+ * 默认模式是 `merchant`（云购会话），那里所有检查都是真的。
+ *
+ * 与云购动作码的关系
+ * ----------------
+ * 项目角色回答"在这个项目里能做什么"，云购动作码回答"这个员工在店里能做什么"。
+ * 两者是**且**的关系，因此两个守卫都会调用 `evaluateMerchantActions`——
+ * 被店主收回商品权限的员工，不该因为被加进项目就获得生成文案的能力。
  */
+
+import { DEFAULT_AUTH_MODE, evaluateMerchantActions } from "./identity.js";
 
 /** 权限点。命名用 `资源:动作`，与客服项目的 `service:read` 风格保持一致。 */
 export const ACTIONS = {
@@ -124,10 +131,10 @@ export function can(roleCode, action) {
 }
 
 /**
- * 组合判定：在 AUTH_MODE=off 下放行并标记 bypass。
+ * 组合判定：在 AUTH_MODE=off（显式本地演示后门）下放行并标记 bypass。
  *
  * @param {object} params
- * @param {string} params.authMode off / local / strict
+ * @param {string} params.authMode merchant / off / local / strict
  * @param {string|null} params.roleCode 调用方在项目中的角色（无成员记录时为 null）
  * @param {string} params.action 权限点
  */
@@ -185,7 +192,7 @@ export function highestRole(roleCodes) {
 export function requirePlatformPermission({ action, allowUnscoped = false }) {
   return async function platformPermissionGuard(request, response, next) {
     try {
-      const authMode = request.identityMode || "off";
+      const authMode = request.identityMode || DEFAULT_AUTH_MODE;
 
       if (authMode === "off") {
         request.access = { allowed: true, bypass: true, reason: "AUTH_MODE=off，本地演示模式放行" };
@@ -197,6 +204,19 @@ export function requirePlatformPermission({ action, allowUnscoped = false }) {
         return response.status(401).json({
           code: "UNAUTHORIZED",
           message: "请先登录",
+          data: null,
+        });
+      }
+
+      // 云购动作码是独立的第二道闸：项目角色回答"在这个项目里能做什么"，
+      // 云购动作码回答"这个员工在店里能做什么"。两者是「且」的关系——
+      // 被店主收回商品权限的员工，不该因为被加进项目就获得生成文案的能力。
+      const merchantVerdict = evaluateMerchantActions(request, action);
+      if (!merchantVerdict.allowed) {
+        request.access = { ...merchantVerdict, merchantDenied: true };
+        return response.status(403).json({
+          code: "FORBIDDEN",
+          message: "云购账号无权执行该操作",
           data: null,
         });
       }
@@ -243,6 +263,28 @@ export function requirePlatformPermission({ action, allowUnscoped = false }) {
 }
 
 /**
+ * 只校验云购动作码的轻量守卫：用于**没有项目维度**、也没走平台级/项目级守卫的路由。
+ *
+ * 典型场景是项目本身的创建与列表：那里没有"项目 id"可查，但"能不能建项目/看项目"
+ * 仍然要受云购动作码约束，否则一个只有 product:read 的员工也能建项目。
+ * local/strict/off 模式下直接放行（它们没有云购会话可比）。
+ */
+export function requireMerchantAction(action) {
+  return function merchantActionGuard(request, response, next) {
+    const verdict = evaluateMerchantActions(request, action);
+    if (!verdict.allowed) {
+      request.access = { ...verdict, merchantDenied: true };
+      return response.status(403).json({
+        code: "FORBIDDEN",
+        message: "云购账号无权执行该操作",
+        data: null,
+      });
+    }
+    return next();
+  };
+}
+
+/**
  * 路由守卫工厂：要求请求身份在指定项目中具备某权限。
  *
  * `resolveProjectId(request)` 让每个路由自己说明"项目 id 从哪来"——
@@ -256,7 +298,7 @@ export function requirePlatformPermission({ action, allowUnscoped = false }) {
 export function requireProjectPermission({ action, resolveProjectId }) {
   return async function projectPermissionGuard(request, response, next) {
     try {
-      const authMode = request.identityMode || "off";
+      const authMode = request.identityMode || DEFAULT_AUTH_MODE;
       const identity = request.identity;
 
       // off 模式没有真实身份，直接放行（但记 reason 便于测试断言）。
@@ -269,6 +311,16 @@ export function requireProjectPermission({ action, resolveProjectId }) {
         return response.status(401).json({
           code: "UNAUTHORIZED",
           message: "请先登录",
+          data: null,
+        });
+      }
+
+      const merchantVerdict = evaluateMerchantActions(request, action);
+      if (!merchantVerdict.allowed) {
+        request.access = { ...merchantVerdict, merchantDenied: true };
+        return response.status(403).json({
+          code: "FORBIDDEN",
+          message: "云购账号无权执行该操作",
           data: null,
         });
       }

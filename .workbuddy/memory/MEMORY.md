@@ -16,7 +16,7 @@
   `cost/`（compute_cost + batch.costSummary，COST_PRICING_JSON 可覆盖单价）、
   `storage/`+`queue/`（ObjectStore 本地/S3 抽象、MemoryJobQueue/RedisJobQueue；
   MemoryStore/RedisStore 内嵌队列，worker_loop 两种后端均可）。
-- `apps/commerce-api`、`seller-admin`、`storefront` 属于暂存的独立站实验代码，不参与主链路
+- `apps/commerce-api`、`seller-admin`、`storefront` 已于 2026-10 归档移除（`commerce.*` 12 张表核查全为 0 行），不参与主链路
 - 正式商城在 `F:\Python_code\Flask项目`，与本仓库代码和数据库独立，通过 REST + Webhook + 归因字段连接
 - DB：PostgreSQL，未配置时回退内存模式
 
@@ -97,7 +97,7 @@ Agnes（文本/图片主链路）、ModelScope（补位）、OpenAI（视频实�
 - 仓库根目录只保留入口与配置；运行日志统一在 `.local-stack/`（gitignored），不要再往根目录丢日志。
 - 有引用、不能删：`src/store.js`（scripts/init-postgres.js、reset-generated-data.js 依赖）、
   `data/platform-db.json`（同上）、`db/postgres-init.sql`、`storage/listing-pack-demo.zip`（demo 脚本引用）。
-- `apps/commerce-api`、`seller-admin`、`storefront` 是暂存的独立站实验代码：虽然不参与主链路，
+- `apps/commerce-api`、`seller-admin`、`storefront` 已归档移除：虽然不参与主链路，
   但被根 `package.json` 的 workspaces 引用，不能删或搬移，否则 `npm ci` 会失败。
 - 死代码已于 2026-10-11 清理：`App.jsx` 的 `activeStep` 与 `renderImportStep/renderJobStep/
   renderResultStep` 已删除（-335 行）。**遗留待决策**：商品导入 / 任务列表 / 结果浏览 / 打包

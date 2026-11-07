@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
-    "test": "node --test src/services/creation-request-service.test.js src/services/import-batch-service.test.js src/services/products-service.test.js src/services/content-job-service.test.js src/services/task-event-service.test.js src/services/batch-item-event-service.test.js src/services/content-export-service.test.js src/routes/batch-item-events.test.js src/routes/import-batches.test.js src/lib/identity.test.js src/routes/auth.test.js src/lib/permissions.test.js src/lib/platform-permissions.test.js src/lib/billing.test.js src/routes/members.test.js"
+    "test": "node --test src/services/creation-request-service.test.js src/services/import-batch-service.test.js src/services/products-service.test.js src/services/content-job-service.test.js src/services/task-event-service.test.js src/services/batch-item-event-service.test.js src/services/content-export-service.test.js src/services/data-hub-sync-service.test.js src/routes/batch-item-events.test.js src/routes/data-hub.test.js src/routes/import-batches.test.js src/routes/resource-scope.test.js src/routes/asset-access.test.js src/routes/merchant-identity.test.js src/lib/identity.test.js src/routes/auth.test.js src/lib/permissions.test.js src/lib/platform-permissions.test.js src/lib/billing.test.js src/routes/members.test.js src/repositories/merchant-links-postgres.test.js",
+    "test:pg": "node --test src/repositories/merchant-links-postgres.test.js"
   },
   "dependencies": {
     "cors": "^2.8.5",

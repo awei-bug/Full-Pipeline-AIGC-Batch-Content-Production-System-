@@ -19,6 +19,7 @@ import { listingPacksRouter } from "./routes/listing-packs.js";
 import { dataHubRouter } from "./routes/data-hub.js";
 import { createListingPackService } from "./services/listing-pack-service.js";
 import { createDataHubSyncService } from "./services/data-hub-sync-service.js";
+import { createHubSyncStatusRepository } from "./repositories/hub-sync-status-repository.js";
 import { createCommerceIntegrationClient } from "./lib/commerce-integration-client.js";
 import { createDataHubClient } from "./lib/data-hub-client.js";
 import { createPool, hasDatabaseConfig } from "./lib/database.js";
@@ -26,9 +27,11 @@ import { createAiOrchestratorClient, hasAiOrchestratorConfig } from "./lib/ai-or
 import { ipContentRouter } from "./routes/ip-content.js";
 import { authRouter } from "./routes/auth.js";
 import { membersRouter } from "./routes/members.js";
-import { createIdentityMiddleware, resolveAuthMode } from "./lib/identity.js";
+import { createIdentityMiddleware, healthAuthMode, resolveAuthMode } from "./lib/identity.js";
+import { hasMerchantIdentityConfig, resolveMerchantIdentityUrl } from "./lib/merchant-identity.js";
 import { verifyToken } from "./lib/local-auth.js";
 import { createUsersRepository } from "./repositories/users-repository.js";
+import { createMerchantLinksRepository } from "./repositories/merchant-links-repository.js";
 import { createCreditRepository } from "./repositories/credits-repository.js";
 import { MemoryProjectsRepository, PostgresProjectsRepository } from "./repositories/projects-repository.js";
 import {
@@ -68,6 +71,9 @@ export async function buildApp({ env = process.env } = {}) {
     : new MemoryContentJobsRepository(productsRepository);
   const workflowRepository = pool ? new PostgresWorkflowRepository(pool) : new MemoryWorkflowRepository();
   const usersRepository = createUsersRepository(pool);
+  // 云购商家 → 内容平台用户 的显式映射。没有数据库时用内存实现，
+  // 但那种情况下也不会有真实商家会话可用（见 /api/health 的 identityConfigured）。
+  const merchantLinksRepository = createMerchantLinksRepository(pool);
   // 额度仓储：无数据库时用内存实现（重启丢额度，仅供本地演示）。
   const creditRepository = createCreditRepository(pool, { env });
   const aiOrchestratorClient = createAiOrchestratorClient(env);
@@ -84,6 +90,7 @@ export async function buildApp({ env = process.env } = {}) {
   app.locals.listingPackService = listingPackService;
   app.locals.dataHubClient = dataHubClient;
   app.locals.dataHubSyncService = dataHubSyncService;
+  app.locals.hubSyncStatusRepository = createHubSyncStatusRepository(pool);
   app.locals.commerceIntegrationClient = createCommerceIntegrationClient(env);
   app.locals.pool = pool;
   app.locals.projectsRepository = projectsRepository;
@@ -93,24 +100,18 @@ export async function buildApp({ env = process.env } = {}) {
   app.locals.workflowRepository = workflowRepository;
   app.locals.aiOrchestratorClient = aiOrchestratorClient;
   app.locals.usersRepository = usersRepository;
+  app.locals.merchantLinksRepository = merchantLinksRepository;
   app.locals.creditRepository = creditRepository;
   // 路由层需要读 AUTH_MODE / AUTH_SECRET；显式挂到 locals，避免各处直接摸 process.env。
   app.locals.env = env;
+  app.locals.assetsDir = assetsDir;
 
   app.use(cors());
   app.use("/api/ip-content", express.json({ limit: "2mb" }));
   app.use(express.json());
-  app.use("/storage/assets", express.static(assetsDir));
 
-  // 身份解析必须早于所有业务路由：下游用 request.identity 决定数据归属。
-  // AUTH_MODE 默认 off —— 沿用旧的"所有请求都是演示用户"行为，不破坏双击启动。
-  app.use(
-    createIdentityMiddleware({
-      env,
-      verifyToken: (token) => verifyToken(token, { secret: env.AUTH_SECRET }),
-    }),
-  );
-
+  // 健康检查必须**先于**身份中间件：前端靠它探测 authMode，探测本身不可能带凭证。
+  // 这里只暴露能力开关，不暴露任何用户数据。
   app.get("/api/health", (_request, response) => {
     response.json({
       code: "SUCCESS",
@@ -128,12 +129,38 @@ export async function buildApp({ env = process.env } = {}) {
         commercePushTenant: app.locals.commerceIntegrationClient?.target?.tenantSlug || null,
         dataHubConfigured: Boolean(dataHubClient),
         dataHubTarget: dataHubClient?.target?.baseUrl || null,
-        // 前端靠这个字段决定要不要显示登录界面。不让前端自己读环境变量：
-        // 构建产物与后端配置可能不同步，问后端才准。
-        authMode: resolveAuthMode(env),
+        // 身份来源：merchant = 云购会话（正式），off = 显式本地演示后门。
+        // authMode 保持前端可识别的取值域（off/local/strict）：云购会话呈现为
+        // strict，否则前端会把未知值回落成 off（= 演示模式），等于没改。
+        authMode: healthAuthMode(env),
+        authModeRaw: resolveAuthMode(env),
+        identitySource: resolveAuthMode(env) === "merchant" ? "merchant-session" : "local",
+        // 云购校验地址是否已配置。未配置时 merchant 模式一律拒绝访问（503），
+        // 把这个事实暴露出来，运维不必翻日志就能判断"是不是少配了变量"。
+        identityConfigured: hasMerchantIdentityConfig(env),
+        identityEndpoint: resolveMerchantIdentityUrl(env),
+        // 映射仓储的实际后端：postgres 才是可审计、可跨进程一致的正式路径。
+        merchantLinksRepository: merchantLinksRepository.mode,
+        // 项目与工作流仓储后端（验收要求：必须显示 PostgreSQL 而不是内存）。
+        databaseMode: pool ? "postgres" : "memory",
       },
     });
   });
+
+  // Direct static URLs have no project identity; retain only in demo mode.
+  app.use("/storage/assets", (request, response, next) => {
+    if (resolveAuthMode(env) !== "off") return response.status(404).end();
+    return next();
+  }, express.static(assetsDir));
+
+  // 身份解析必须早于所有业务路由：下游用 request.identity 决定数据归属。
+  // 默认模式是 merchant（云购会话）；AUTH_MODE=off 是显式开启的本地演示后门。
+  app.use(
+    createIdentityMiddleware({
+      env,
+      verifyToken: (token) => verifyToken(token, { secret: env.AUTH_SECRET }),
+    }),
+  );
 
   app.use("/api/auth", authRouter);
   app.use("/api/projects", projectsRouter);

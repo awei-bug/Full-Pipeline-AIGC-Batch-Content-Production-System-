@@ -5,10 +5,7 @@
   "type": "module",
   "workspaces": [
     "apps/studio-web",
-    "apps/api-server",
-    "apps/commerce-api",
-    "apps/seller-admin",
-    "apps/storefront"
+    "apps/api-server"
   ],
   "scripts": {
     "dev": "npm --workspace apps/api-server run dev",
@@ -17,13 +14,6 @@
     "build:studio": "npm --workspace apps/studio-web run build",
     "dev:api": "npm --workspace apps/api-server run dev",
     "start:api": "npm --workspace apps/api-server run start",
-    "dev:commerce": "npm --workspace apps/commerce-api run dev",
-    "start:commerce": "npm --workspace apps/commerce-api run start",
-    "dev:seller": "npm --workspace apps/seller-admin run dev",
-    "build:seller": "npm --workspace apps/seller-admin run build",
-    "dev:storefront": "npm --workspace apps/storefront run dev",
-    "build:storefront": "npm --workspace apps/storefront run build",
-    "test:commerce": "npm --workspace apps/commerce-api run test",
     "dev:orchestrator": "py -m uvicorn app.main:app --host 127.0.0.1 --port 8110 --reload --app-dir apps/ai-orchestrator",
     "stack:start": "powershell -ExecutionPolicy Bypass -File scripts/start-local-stack.ps1",
     "stack:stop": "powershell -ExecutionPolicy Bypass -File scripts/stop-local-stack.ps1",
@@ -46,7 +36,6 @@
     "test:probe-video": "node --test scripts/modelscope-video-probe.test.js",
     "db:init": "node scripts/init-postgres.js",
     "db:init:core": "node scripts/init-core-schema.js",
-    "db:init:commerce": "node scripts/init-commerce-schema.js",
     "data:reset": "node scripts/reset-generated-data.js"
   },
   "dependencies": {

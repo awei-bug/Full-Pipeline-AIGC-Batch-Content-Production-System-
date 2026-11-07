@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { apiBaseUrl } from "./batch-api.js";
 import { StoryArc, WaitingOrbit } from "./Illustrations.jsx";
+import { MERCHANT_LOGIN_HINT, MERCHANT_LOGIN_URL, authHeaders, clearSession } from "./session.js";
 
 const stages = [
   { id: "research", label: "调研" }, { id: "draft", label: "撰写" },
@@ -19,9 +20,16 @@ const visualStyles = [
 
 async function api(path, options) {
   const response = await fetch(`${apiBaseUrl}/api/ip-content${path}`, {
-    headers: { "Content-Type": "application/json" }, ...options,
+    headers: authHeaders({ "Content-Type": "application/json", ...(options?.headers || {}) }),
+    ...options,
   });
   const payload = await response.json().catch(() => ({}));
+  if (response.status === 401) {
+    // 401 是"没有统一会话/会话已失效"，不是普通请求失败：
+    // 清掉本地残留 token，并把用户导向唯一的登录入口（云购商家后台）。
+    clearSession();
+    throw new Error(`${MERCHANT_LOGIN_HINT}：${MERCHANT_LOGIN_URL}`);
+  }
   if (!response.ok) throw new Error(payload.message || payload.detail || `请求失败 (${response.status})`);
   return payload.data;
 }
@@ -40,7 +48,7 @@ function assetUrl(output) {
   return /^https?:\/\//i.test(path) ? path : `${apiBaseUrl}${path.startsWith("/") ? "" : "/"}${path}`;
 }
 
-export function IPWorkspace() {
+export function IPWorkspace({ sessionReady = true }) {
   const [ipName, setIpName] = useState("");
   const [lore, setLore] = useState("");
   const [chapters, setChapters] = useState([blankChapter()]);
@@ -65,21 +73,24 @@ export function IPWorkspace() {
   const projectRequestId = useRef(0);
 
   useEffect(() => {
+    // 等会话就绪再请求，否则 authHeaders() 还拿不到 token，会误报未登录。
+    if (!sessionReady) return undefined;
     const id = localStorage.getItem(lastBatchKey);
-    if (!id) return;
+    if (!id) return undefined;
     let active = true;
     api(`/batches/${encodeURIComponent(id)}`).then((data) => {
       if (active) { setBatch(data); setSelected(data.items[0]?.id || ""); }
     }).catch((cause) => { if (active) setError(`上次批次暂时无法读取：${cause.message}`); });
     return () => { active = false; };
-  }, []);
+  }, [sessionReady]);
 
   useEffect(() => {
+    if (!sessionReady) return undefined;
     let active = true;
     api("/projects").then((data) => { if (active) setProjects(data); })
       .catch((cause) => { if (active) setError(`设定库加载失败：${cause.message}`); });
     return () => { active = false; };
-  }, []);
+  }, [sessionReady]);
 
   useEffect(() => {
     if (!batch || batch.status !== "running") return undefined;

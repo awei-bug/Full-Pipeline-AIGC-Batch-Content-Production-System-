@@ -18,17 +18,17 @@
  *
  * AUTH_MODE=off 时跳过
  * -------------------
- * 本地演示没有真实身份，扣谁的额度都没意义。与权限层的 bypass 保持一致——
+ * 本地演示没有真实身份，扣谁的额度都没有意义。与权限层的 bypass 保持一致——
  * 否则双击启动立刻不可用。
  */
 
 import crypto from "node:crypto";
 
+import { DEFAULT_AUTH_MODE } from "./identity.js";
 import { InsufficientCreditsError } from "../lib/billing.js";
 
 /**
- * 生成业务单号。同一单号重复提交会被流水表的唯一键挡住（防双扣）。
- *
+ * 生成业务单号。同一单号重复提交会被流水表的唯一键挡住（防双花）。
  * 优先用调用方传入的幂等键（例如前端重试时带同一个 requestId），
  * 没有就生成一个——这意味着同一请求重试会被视为新的一笔，符合"每次调用都计费"。
  */
@@ -47,7 +47,7 @@ function resolveBizNo(request, prefix) {
  */
 export function requireCredits({ action, bizPrefix = null }) {
   return async function creditsGuard(request, response, next) {
-    const authMode = request.identityMode || "off";
+    const authMode = request.identityMode || DEFAULT_AUTH_MODE;
     const identity = request.identity;
 
     // 本地演示不扣费；匿名请求已被上游身份守卫挡住，这里防御性跳过。

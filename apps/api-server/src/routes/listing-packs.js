@@ -1,6 +1,7 @@
 import express from "express";
 
 import { ACTIONS, requirePlatformPermission } from "../lib/permissions.js";
+import { canReadJob } from "../lib/data-scope.js";
 
 export const listingPacksRouter = express.Router();
 
@@ -28,6 +29,7 @@ function parsePrices(value) {
 
 listingPacksRouter.get("/:jobId", async (request, response, next) => {
   try {
+    if (!await canReadJob(request, request.params.jobId)) return response.status(404).json({ code: "NOT_FOUND", message: "任务不存在或无权访问", data: null });
     const service = request.app.locals.listingPackService;
     if (!service) {
       response.status(503).json({
@@ -59,6 +61,7 @@ listingPacksRouter.get("/:jobId", async (request, response, next) => {
 
 listingPacksRouter.get("/:jobId/preview", async (request, response, next) => {
   try {
+    if (!await canReadJob(request, request.params.jobId)) return response.status(404).json({ code: "NOT_FOUND", message: "任务不存在或无权访问", data: null });
     const service = request.app.locals.listingPackService;
     if (!service) {
       response.status(503).json({
@@ -95,6 +98,7 @@ listingPacksRouter.get("/:jobId/preview", async (request, response, next) => {
 
 listingPacksRouter.post("/:jobId/push", requirePublish, async (request, response, next) => {
   try {
+    if (!await canReadJob(request, request.params.jobId, { publish: true })) return response.status(404).json({ code: "NOT_FOUND", message: "任务不存在或无权访问", data: null });
     const service = request.app.locals.listingPackService;
     const commerceClient = request.app.locals.commerceIntegrationClient;
 
@@ -152,6 +156,7 @@ listingPacksRouter.post("/:jobId/push", requirePublish, async (request, response
 
 listingPacksRouter.post("/:jobId", async (request, response, next) => {
   try {
+    if (!await canReadJob(request, request.params.jobId)) return response.status(404).json({ code: "NOT_FOUND", message: "任务不存在或无权访问", data: null });
     const service = request.app.locals.listingPackService;
     if (!service) {
       response.status(503).json({

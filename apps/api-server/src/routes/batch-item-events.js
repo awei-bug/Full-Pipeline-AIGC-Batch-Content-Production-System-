@@ -1,6 +1,7 @@
 import express from "express";
 
 import { applyBatchItemEvent } from "../services/batch-item-event-service.js";
+import { runTrackedHubSync } from "../services/hub-sync-tracker.js";
 
 export const batchItemEventsRouter = express.Router();
 
@@ -42,27 +43,12 @@ batchItemEventsRouter.post("/", async (request, response, next) => {
       result.job &&
       ["success", "partial_success"].includes(result.job.status)
     ) {
-      if (!request.app.locals.dataHubSyncService) {
-        dataHubSync = {
-          status: "not_configured",
-          message: "数据中心同步服务未启用",
-        };
-      } else {
-        try {
-          await request.app.locals.dataHubSyncService.ingestJobContent({
-            jobId: result.job.id,
-          });
-          dataHubSync = { status: "success" };
-        } catch (error) {
-          console.warn(
-            `[data-hub] 自动入库失败，jobId=${result.job.id}:`,
-            error.message || error,
-          );
-          dataHubSync = {
-            status: "failed",
-            message: error.message || "数据中心入库失败",
-          };
-        }
+      try {
+        dataHubSync = await runTrackedHubSync({ jobId: result.job.id, service: request.app.locals.dataHubSyncService, statusRepository: request.app.locals.hubSyncStatusRepository });
+      } catch {
+        // Task completion is durable even if the separate status store is unavailable.
+        console.error("[data-hub] 无法记录同步状态");
+        dataHubSync = { status: "unknown", message: "无法记录同步状态，请检查数据库" };
       }
     }
 

@@ -1,7 +1,10 @@
 import express from "express";
+import path from "node:path";
+import { realpath, lstat } from "node:fs/promises";
 
-import { resolveVisibleProjectIds } from "../lib/data-scope.js";
-import { ACTIONS, requirePlatformPermission } from "../lib/permissions.js";
+import { canReadJob, resolveVisibleProjectIds } from "../lib/data-scope.js";
+import { DEFAULT_AUTH_MODE } from "../lib/identity.js";
+import { ACTIONS, can, requirePlatformPermission } from "../lib/permissions.js";
 import { createContentJobService } from "../services/content-job-service.js";
 
 export const contentJobsRouter = express.Router();
@@ -10,6 +13,30 @@ export const contentJobsRouter = express.Router();
 // 归属到批次，批次再归属到项目。写操作用平台级权限点，**读操作按批次的项目过滤**
 // ——不按项目过滤的话，任何登录用户都能看到别人项目里的任务与产出。
 const requireGenerate = requirePlatformPermission({ action: ACTIONS.PLATFORM_GENERATE });
+
+contentJobsRouter.get("/:jobId/assets/:filename", async (request, response, next) => {
+  try {
+    const filename = request.params.filename;
+    const reject = () => response.status(404).json({ code: "NOT_FOUND", message: "素材不存在或无权访问", data: null });
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,199}$/.test(filename) || filename.includes("..")) return reject();
+    if (!await canReadJob(request, request.params.jobId)) return reject();
+    const outputs = await request.app.locals.contentJobsRepository.listOutputsByJobId(request.params.jobId);
+    const expected = `/storage/assets/${filename}`;
+    const linked = outputs.some((item) => ["image_asset", "video_asset"].includes(item.outputType) && item.outputData?.metadata?.publicUrl === expected);
+    if (!linked) return reject();
+    const root = await realpath(request.app.locals.assetsDir);
+    const candidate = path.join(root, filename);
+    const info = await lstat(candidate);
+    if (!info.isFile() || info.isSymbolicLink() || path.dirname(await realpath(candidate)) !== root) return reject();
+    response.setHeader("Cache-Control", "private, no-store");
+    response.setHeader("X-Content-Type-Options", "nosniff");
+    response.setHeader("Content-Disposition", "attachment");
+    return response.sendFile(candidate, (error) => { if (error && !response.headersSent) reject(); });
+  } catch (error) {
+    if (["ENOENT", "ENOTDIR"].includes(error.code)) return response.status(404).json({ code: "NOT_FOUND", message: "素材不存在或无权访问", data: null });
+    return next(error);
+  }
+});
 
 contentJobsRouter.get("/", async (request, response, next) => {
   try {
@@ -38,7 +65,7 @@ contentJobsRouter.post("/", requireGenerate, async (request, response, next) => 
     }
 
     const batchId = String(request.body?.batchId || "").trim();
-    const authMode = request.identityMode || "off";
+    const authMode = request.identityMode || DEFAULT_AUTH_MODE;
 
     // 创建任务前确认该批次对调用者可见。否则用户可以拿别人批次的 id 直接建任务，
     // 从而间接读到他没权限看的商品数据。
@@ -65,6 +92,10 @@ contentJobsRouter.post("/", requireGenerate, async (request, response, next) => 
             message: "批次不存在或无权访问",
             data: null,
           });
+          return;
+        }
+        if (!can(roleCode, ACTIONS.CONTENT_WRITE).allowed) {
+          response.status(403).json({ code: "FORBIDDEN", message: "当前角色无权创建内容任务", data: null });
           return;
         }
       }

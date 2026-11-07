@@ -1,6 +1,7 @@
 import express from "express";
 
-import { ACTIONS, requirePlatformPermission } from "../lib/permissions.js";
+import { DEFAULT_AUTH_MODE } from "../lib/identity.js";
+import { ACTIONS, can, requirePlatformPermission } from "../lib/permissions.js";
 import { UNSCOPED, resolveVisibleProjectIds } from "../lib/data-scope.js";
 import { createImportBatchService } from "../services/import-batch-service.js";
 
@@ -24,7 +25,7 @@ const requireImport = requirePlatformPermission({
  */
 async function verifyProjectScope(request, response, next) {
   try {
-    const authMode = request.identityMode || "off";
+    const authMode = request.identityMode || DEFAULT_AUTH_MODE;
     const requestedProjectId = String(request.body?.projectId || "").trim() || null;
     request.resolvedProjectId = requestedProjectId;
 
@@ -43,6 +44,9 @@ async function verifyProjectScope(request, response, next) {
         message: "项目不存在或无权访问",
         data: null,
       });
+    }
+    if (!can(roleCode, ACTIONS.CONTENT_WRITE).allowed) {
+      return response.status(403).json({ code: "FORBIDDEN", message: "当前角色无权导入商品", data: null });
     }
     return next();
   } catch (error) {

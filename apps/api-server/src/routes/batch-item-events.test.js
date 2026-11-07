@@ -3,6 +3,7 @@ import express from "express";
 import test from "node:test";
 
 import { batchItemEventsRouter } from "./batch-item-events.js";
+import { createHubSyncStatusRepository } from "../repositories/hub-sync-status-repository.js";
 import { MemoryContentJobsRepository } from "../repositories/content-jobs-repository.js";
 import { MemoryImportBatchesRepository } from "../repositories/import-batches-repository.js";
 import { MemoryProductsRepository } from "../repositories/products-repository.js";
@@ -39,6 +40,7 @@ async function withRouter({ repository, dataHubSyncService }, run) {
   app.use(express.json());
   app.locals.contentJobsRepository = repository;
   app.locals.dataHubSyncService = dataHubSyncService;
+  app.locals.hubSyncStatusRepository = createHubSyncStatusRepository(null);
   app.use("/internal/batch-items/events", batchItemEventsRouter);
   const server = app.listen(0, "127.0.0.1");
   await new Promise((resolve) => server.once("listening", resolve));
@@ -71,6 +73,7 @@ test("terminal batch event automatically ingests completed job content", async (
       dataHubSyncService: {
         async ingestJobContent({ jobId }) {
           ingestedJobIds.push(jobId);
+          return { hub: { received: 1, okCount: 1, errorCount: 0 }, skipped: [] };
         },
       },
     },
@@ -111,7 +114,7 @@ test("data hub failure does not turn a persisted callback into an HTTP failure",
       assert.equal(result.body.code, "SUCCESS");
       assert.equal(result.body.data.jobItem.status, "success");
       assert.equal(result.body.data.dataHubSync.status, "failed");
-      assert.equal(result.body.data.dataHubSync.message, "data hub unavailable");
+      assert.match(result.body.data.dataHubSync.message, /同步失败/);
     },
   );
 });

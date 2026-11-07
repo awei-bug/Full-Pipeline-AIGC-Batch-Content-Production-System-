@@ -1,5 +1,5 @@
 /**
- * 权限门与登录面板。
+ * 权限门与会话 hook。
  *
  * `<PermissionGate>` 的设计意图是**只做一件事**：没权限就不渲染，并说明为什么。
  * 不做"禁用一个看起来正常的按钮"——灰色按钮不告诉用户原因，是常见的糟糕体验。
@@ -7,6 +7,9 @@
  * 渲染禁用按钮（用于"按钮必须在原位、否则布局跳动"的工具栏场景）。
  *
  * 重要：**这不是安全边界**。后端才是。前端只负责不让用户白点一下吃 403。
+ *
+ * 登录不再由本应用提供：唯一登录入口是云购商家后台（`MERCHANT_LOGIN_URL`）。
+ * 本文件因此没有登录表单，只有"未登录时引导去商家后台"的说明块。
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -16,14 +19,15 @@ import {
   forbiddenHint,
 } from "./permissions.js";
 import {
+  MERCHANT_LOGIN_HINT,
+  MERCHANT_LOGIN_URL,
+  clearSession,
   detectAuthMode,
   fetchMyRoles,
-  login,
-  readRoleCode,
   readToken,
-  register,
+  hydrateSession,
+  readRoleCode,
   saveSession,
-  clearSession,
 } from "./session.js";
 
 /**
@@ -46,7 +50,7 @@ export function PermissionGate({
   const allowed = permissions?.can(action) ?? false;
   if (allowed) return children;
 
-  const hint = forbiddenText || forbiddenHint(action, permissions?.roleCode);
+  const hint = forbiddenText || forbiddenHint(action, permissions?.roleCode, permissions?.authenticated);
 
   if (mode === "disable") {
     return (
@@ -66,118 +70,46 @@ export function PermissionGate({
 }
 
 /**
- * 登录/注册面板。只在后端 authMode 为 local/strict 时显示。
+ * 未检测到统一会话时的引导块。
  *
- * 交互取舍：注册与登录放在同一个面板，用 tab 切换。本地工具的用户量下，
- * 拆成两个页面只会增加点击次数。
+ * 明确指向唯一登录入口，而不是在原地再开一个登录表单——用户已明确要求
+ * 全链路只能有一个登录页。`target="_blank"` + `rel="noopener noreferrer"`
+ * 保证商家后台不会拿到本页的 `window.opener`。
  */
-export function AuthPanel({
-  apiBaseUrl,
-  authMode,
-  onAuthenticated,
-  fetchImpl = fetch,
-}) {
-  const [tab, setTab] = useState("login");
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-
-  const submit = useCallback(
-    async (event) => {
-      event.preventDefault();
-      setError("");
-      setBusy(true);
-      try {
-        if (tab === "register") {
-          await register(apiBaseUrl, { username, password }, fetchImpl);
-        }
-        const data = await login(apiBaseUrl, { username, password }, fetchImpl);
-        saveSession({ token: data?.token, roleCode: data?.user?.roleCode || "" });
-        onAuthenticated?.(data);
-      } catch (cause) {
-        setError(cause?.message || "操作失败");
-      } finally {
-        setBusy(false);
-      }
-    },
-    [apiBaseUrl, fetchImpl, onAuthenticated, password, tab, username],
-  );
-
-  if (authMode === "off") return null;
-
+export function MerchantLoginPrompt({ authMode = "strict", onRefresh }) {
   return (
-    <section className="auth-panel" aria-label="登录">
-      <div className="auth-tabs" role="tablist">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === "login"}
-          className={tab === "login" ? "is-active" : ""}
-          onClick={() => setTab("login")}
-        >
-          登录
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === "register"}
-          className={tab === "register" ? "is-active" : ""}
-          onClick={() => setTab("register")}
-        >
-          注册
-        </button>
-      </div>
-      <form onSubmit={submit} className="auth-form">
-        <label>
-          用户名
-          <input
-            value={username}
-            onChange={(event) => setUsername(event.target.value)}
-            autoComplete="username"
-            required
-            minLength={3}
-          />
-        </label>
-        <label>
-          密码
-          <input
-            type="password"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            autoComplete={tab === "register" ? "new-password" : "current-password"}
-            required
-            minLength={tab === "register" ? 8 : 1}
-          />
-        </label>
-        {error ? (
-          <p className="auth-error" role="alert">
-            {error}
-          </p>
-        ) : null}
-        <button type="submit" className="primary-button" disabled={busy}>
-          {busy ? "处理中" : tab === "register" ? "注册并登录" : "登录"}
-        </button>
-      </form>
-      <p className="auth-note">
-        当前后端为 <code>{authMode}</code> 鉴权模式。登录后按项目角色显示可执行操作。
+    <section className="merchant-login-prompt" aria-label="统一登录提示">
+      <p>
+        {MERCHANT_LOGIN_HINT}。
+        <a href={MERCHANT_LOGIN_URL} target="_blank" rel="noopener noreferrer">
+          前往商家后台登录
+        </a>
       </p>
+      <p className="merchant-login-note">
+        当前内容平台鉴权模式为 <code>{authMode}</code>，身份统一由云购商家会话签发。
+        在商家后台登录后回到本页，点击下方按钮重新检查。
+      </p>
+      {onRefresh ? (
+        <button type="button" className="secondary-button" onClick={onRefresh}>
+          我已登录，重新检查会话
+        </button>
+      ) : null}
     </section>
   );
 }
 
 /**
- * 会话 hook：探测后端鉴权模式、从服务端取真实角色、给出 permissions 视图。
+ * 会话 hook：探测后端鉴权模式、从统一会话换 token、从服务端取真实角色。
  *
  * 角色来源是 **`GET /api/auth/me/projects`（服务端权威）**，不是本地缓存。
  * 本地缓存只在首屏渲染时作为占位，拿到服务端结果后立即覆盖——否则用户
  * 可能因为缓存里是 owner 而短暂看到不该看到的按钮。
  *
- * 探测失败一律回落 off（与后端默认一致）。理由：网络抖动不该让用户突然
- * 看到"要求登录"，那比不提要求更困扰。
+ * 探测失败或未知模式一律按 `strict`（fail-closed），只有后端明确报 `off`
+ * 才进入演示模式。
  */
 export function usePermissionSession(apiBaseUrl, { projectId = "", fetchImpl = fetch } = {}) {
-  const [authMode, setAuthMode] = useState("off");
+  const [authMode, setAuthMode] = useState("strict");
   const [roleCode, setRoleCode] = useState(() => readRoleCode());
   const [token, setToken] = useState(() => readToken());
   const [memberships, setMemberships] = useState([]);
@@ -188,13 +120,21 @@ export function usePermissionSession(apiBaseUrl, { projectId = "", fetchImpl = f
     detectAuthMode(apiBaseUrl, fetchImpl).then((mode) => {
       if (cancelled) return;
       setAuthMode(mode);
-      // off 模式下清掉残留 token/角色，避免上一次登录的状态影响演示模式显示。
+      // off 模式下清掉残留 token/角色，避免上一次会话的状态影响演示模式显示。
       if (mode === "off") {
         clearSession();
         setToken("");
         setRoleCode("");
+        setReady(true);
+        return;
       }
-      setReady(true);
+      // 非 off 模式：向云购确认会话。hydrateSession 会先校验本地缓存的 token，
+      // 失效或过期时自动用共享 Cookie 换一个新的——首屏不再依赖手动刷新。
+      hydrateSession(fetchImpl, undefined, apiBaseUrl).then((nextToken) => {
+        if (cancelled) return;
+        setToken(nextToken);
+        setReady(true);
+      });
     });
     return () => {
       cancelled = true;
@@ -218,24 +158,24 @@ export function usePermissionSession(apiBaseUrl, { projectId = "", fetchImpl = f
   }, [apiBaseUrl, authMode, fetchImpl, token]);
 
   const permissions = useMemo(
-    () => buildPermissionView({ authMode, roleCode: roleCode || null }),
-    [authMode, roleCode],
+    () => buildPermissionView({ authMode, roleCode: roleCode || null, authenticated: Boolean(token) }),
+    [authMode, roleCode, token],
   );
 
-  const signOut = useCallback(() => {
+  /**
+   * 重新读取统一会话。
+   *
+   * 用户在商家后台登录后回到本页，点"我已登录，重新检查"就走这里：
+   * 清掉可能失效的本地 token，再向云购换一次。
+   */
+  const refresh = useCallback(async () => {
     clearSession();
-    setToken("");
     setRoleCode("");
     setMemberships([]);
-  }, []);
-
-  const signIn = useCallback((data) => {
-    // 登录响应里的 roleCode 通常为空（后端不知道该用户在哪个项目），
-    // 真正的角色由上面的 me/projects 效应拉取。
-    const nextToken = data?.token || "";
+    const nextToken = await hydrateSession(fetchImpl, undefined, apiBaseUrl);
     setToken(nextToken);
-    setRoleCode(data?.user?.roleCode || "");
-  }, []);
+    return nextToken;
+  }, [apiBaseUrl, fetchImpl]);
 
   return {
     authMode,
@@ -245,8 +185,7 @@ export function usePermissionSession(apiBaseUrl, { projectId = "", fetchImpl = f
     permissions,
     ready,
     projectId,
-    signIn,
-    signOut,
+    refresh,
     setRoleCode,
   };
 }

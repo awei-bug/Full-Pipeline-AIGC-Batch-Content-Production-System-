@@ -18,12 +18,16 @@ import {
   sendChatMessage,
   startContentWorkflow,
   getContentWorkflow,
+  getHubSyncStatus,
+  retryHubSync,
 } from "./batch-api.js";
 import { deriveBatchWorkspaceView, shouldPollContentJob } from "./batch-view-model.js";
 import { EmptyCanvas, FlowNodes } from "./Illustrations.jsx";
 import { IPWorkspace } from "./IPWorkspace.jsx";
 import { getSystemTheme, setTheme as persistTheme } from "./theme.js";
-import { AuthPanel, PermissionGate, usePermissionSession } from "./PermissionGate.jsx";
+import { MerchantLoginPrompt, PermissionGate, usePermissionSession } from "./PermissionGate.jsx";
+import { MERCHANT_LOGIN_URL } from "./session.js";
+import { fetchJobAsset } from "./protected-asset.js";
 import { ACTIONS } from "./permissions.js";
 
 const defaultCsvText = [
@@ -143,6 +147,31 @@ function WorkflowStage({ stage, index }) {
   );
 }
 
+function ProtectedBatchAsset({ jobId, url, type, authMode, token, ready }) {
+  const [preview, setPreview] = useState("");
+  const [error, setError] = useState("");
+  useEffect(() => {
+    let objectUrl = "";
+    let cancelled = false;
+    const controller = new AbortController();
+    setPreview("");
+    setError("");
+    if (!ready || !url || !jobId) return () => controller.abort();
+    if (authMode === "off") { setPreview(url); return () => controller.abort(); }
+    fetchJobAsset(apiBaseUrl, jobId, url, token, { signal: controller.signal })
+      .then((blob) => {
+        if (cancelled) return;
+        objectUrl = URL.createObjectURL(blob);
+        setPreview(objectUrl);
+      })
+      .catch(() => { if (!cancelled) setError("素材不可用或访问权限已变更"); });
+    return () => { cancelled = true; controller.abort(); if (objectUrl) URL.revokeObjectURL(objectUrl); };
+  }, [jobId, url, authMode, token, ready]);
+  if (error) return <p role="status">{error}</p>;
+  if (!preview) return <p>素材加载中…</p>;
+  return type === "video_asset" ? <video src={preview} controls preload="metadata" aria-label="生成视频" /> : <img src={preview} alt="生成图片" />;
+}
+
 function WorkflowVariant({ variant, kind }) {
   const output = variant.output;
   const assetUrl = getWorkflowAssetUrl(output);
@@ -221,7 +250,6 @@ export function App() {
   // 会话与权限：探测后端 authMode，AUTH_MODE=off 时 permissions.bypass=true，
   // 所有权限检查放行，界面与改造前完全一致。
   const session = usePermissionSession(apiBaseUrl);
-  const [authPanelOpen, setAuthPanelOpen] = useState(false);
   const [workflowCopyInput, setWorkflowCopyInput] = useState(initialWorkflowBrief);
   const [workflowCopyMessages, setWorkflowCopyMessages] = useState([
     {
@@ -261,8 +289,11 @@ export function App() {
   const [pushResult, setPushResult] = useState(null);
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
+  const [hubSync, setHubSync] = useState(null);
+  const [hubRetrying, setHubRetrying] = useState(false);
   const workspaceRequestIdRef = useRef(0);
   const selectedBatchIdRef = useRef(selectedBatchId);
+  const latestJobIdRef = useRef("");
 
   useEffect(() => {
     selectedBatchIdRef.current = selectedBatchId;
@@ -282,6 +313,7 @@ export function App() {
       }),
     [batches, products, jobs, outputs, selectedBatchId, selectedResultType, expandedResultIds],
   );
+  latestJobIdRef.current = view.latestJob?.id || "";
 
   async function loadWorkspace(preferredBatchId = "", options = {}) {
     const resetResultView = options.resetResultView ?? true;
@@ -312,6 +344,9 @@ export function App() {
   }
 
   useEffect(() => {
+    // 等会话就绪再拉工作区数据；否则首次加载会在拿到 token 之前发请求，
+    // 401 会以「未检测到云购商家会话」的形式停在页面上。
+    if (!session.ready) return undefined;
     let active = true;
 
     async function bootstrap() {
@@ -337,7 +372,7 @@ export function App() {
       active = false;
       workspaceRequestIdRef.current += 1;
     };
-  }, []);
+  }, [session.ready]);
 
   useEffect(() => {
     if (!workflowRun?.id || ["success", "partial_success", "failed"].includes(workflowRun.status)) {
@@ -416,6 +451,57 @@ export function App() {
     };
   }, [selectedBatchId, view.latestJob?.id, view.latestJob?.status]);
 
+  useEffect(() => {
+    const job = view.latestJob;
+    let active = true;
+    let timer;
+    let unknownChecks = 0;
+    setHubSync(null);
+    if (!job || !["success", "partial_success"].includes(job.status)) return () => { active = false; };
+    async function refresh() {
+      try {
+        const state = await getHubSyncStatus(job.id);
+        if (!active) return;
+        setHubSync(state);
+        if (state.status === "unknown") unknownChecks += 1;
+        if (state.status === "syncing" || (state.status === "unknown" && unknownChecks < 3)) timer = window.setTimeout(refresh, 3000);
+      } catch {
+        if (active) setHubSync({ status: "unknown", message: "无法读取同步状态，请检查连接" });
+      }
+    }
+    refresh();
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [view.latestJob?.id, view.latestJob?.status]);
+
+  async function handleRetryHubSync() {
+    const jobId = view.latestJob?.id;
+    if (!jobId) return;
+    try {
+      setHubRetrying(true);
+      const result = await retryHubSync(jobId);
+      if (latestJobIdRef.current === jobId) {
+        setHubSync(result);
+        if (result.status === "syncing") {
+          const poll = async () => {
+            if (latestJobIdRef.current !== jobId) return;
+            try {
+              const state = await getHubSyncStatus(jobId);
+              if (latestJobIdRef.current === jobId) {
+                setHubSync(state);
+                if (state.status === "syncing") window.setTimeout(poll, 3000);
+              }
+            } catch {
+              if (latestJobIdRef.current === jobId) setHubSync({ status: "unknown", message: "无法读取同步状态，请检查连接" });
+            }
+          };
+          window.setTimeout(poll, 3000);
+        }
+      }
+    } catch (error) {
+      if (latestJobIdRef.current === jobId) setHubSync({ status: "unknown", message: error.message || "无法重试同步" });
+    } finally { setHubRetrying(false); }
+  }
+
   async function handleImport(event) {
     event.preventDefault();
 
@@ -451,9 +537,13 @@ export function App() {
       setErrorMessage("");
       setSuccessMessage("");
       const parsed = await parseImportFile(file);
+      if (parsed.headers.some((header) => /[\r\n]/.test(header)) || parsed.rows.some((row) => parsed.headers.some((header) => /[\r\n]/.test(String(row[header] ?? ""))))) {
+        throw new Error("文件中的单元格包含换行，请先去掉换行后再导入。");
+      }
+      const csvCell = (value) => `"${String(value ?? "").replace(/"/g, '""')}"`;
       const nextCsvText = [
-        parsed.headers.join(","),
-        ...parsed.rows.map((row) => parsed.headers.map((header) => row[header] ?? "").join(",")),
+        parsed.headers.map(csvCell).join(","),
+        ...parsed.rows.map((row) => parsed.headers.map((header) => csvCell(row[header])).join(",")),
       ].join("\n");
 
       setFileName(parsed.fileName);
@@ -789,6 +879,47 @@ export function App() {
   const latestStatusLabel = getJobStatusLabel(view.latestJob?.status);
   const hasBatch = Boolean(view.activeBatch);
   const hasJob = Boolean(view.latestJob);
+
+  function renderCommerceBatch() {
+    return (
+      <section className="commerce-batch" aria-labelledby="commerce-batch-title">
+        <div className="commerce-batch-heading">
+          <div><h2 id="commerce-batch-title">商品批量内容</h2><p>导入商品，创建内容任务，完成后同步商品知识。</p></div>
+        </div>
+        <div className="commerce-batch-grid">
+          <form className="commerce-batch-section" onSubmit={handleImport}>
+            <h3>导入商品</h3>
+            <p>CSV 或 Excel 可包含商品名称、卖点、售价和库存；售价需填写纯数字。</p>
+            <label htmlFor="commerce-file">选择文件</label>
+            <input id="commerce-file" type="file" accept=".csv,.xlsx,.xls" onChange={handleSelectImportFile} />
+            {selectedFileName ? <p>已选择：{selectedFileName}</p> : null}
+            <label htmlFor="commerce-csv">商品数据（CSV）</label>
+            <textarea id="commerce-csv" rows="7" value={csvText} onChange={(event) => setCsvText(event.target.value)} />
+            <PermissionGate permissions={session.permissions} action={ACTIONS.CONTENT_WRITE}>
+              <button className="primary-button" type="submit" disabled={isImporting}>{isImporting ? "导入中…" : "导入商品"}</button>
+            </PermissionGate>
+          </form>
+          <section className="commerce-batch-section">
+            <h3>创建任务</h3>
+            <label htmlFor="commerce-batch-select">商品批次</label>
+            <select id="commerce-batch-select" value={view.selectedBatchId} onChange={(event) => setSelectedBatchId(event.target.value)} disabled={!view.batchOptions.length}>
+              {!view.batchOptions.length ? <option value="">请先导入商品</option> : null}
+              {view.batchOptions.map((batch) => <option key={batch.id} value={batch.id}>{batch.title} · {batch.subtitle}</option>)}
+            </select>
+            {view.activeProducts.length ? <ul className="commerce-product-list">{view.activeProducts.map((product) => <li key={product.id}><strong>{product.normalizedData?.name || "未命名商品"}</strong><span>商品 ID：cc-{product.id}</span></li>)}</ul> : <p>当前没有已导入商品。</p>}
+            <fieldset><legend>生成内容</legend>{contentTypeOptions.map((option) => <label key={option.value}><input type="checkbox" checked={selectedContentTypes.includes(option.value)} onChange={(event) => setSelectedContentTypes((current) => event.target.checked ? [...current, option.value] : current.filter((type) => type !== option.value))} /> {option.title}</label>)}</fieldset>
+            <PermissionGate permissions={session.permissions} action={ACTIONS.CONTENT_WRITE}>
+              <button className="primary-button" type="button" onClick={handleCreateJob} disabled={!hasBatch || isCreatingJob}>{isCreatingJob ? "创建中…" : "创建内容任务"}</button>
+            </PermissionGate>
+          </section>
+        </div>
+        <section className="commerce-batch-section commerce-results" aria-live="polite">
+          <h3>任务结果</h3>
+          {hasJob ? <><p>任务状态：{latestStatusLabel} · 进度 {latestProgress}%</p>{view.latestOutputCards.map((item) => <article key={item.id}><strong>{item.typeLabel} · {item.sourceLabel}</strong><p>{item.content || item.previewText}</p>{(item.imageUrl || item.videoUrl) && <ProtectedBatchAsset jobId={view.latestJob.id} url={item.imageUrl || item.videoUrl} type={item.type} authMode={session.authMode} token={session.token} ready={session.ready} />}</article>)}{["success", "partial_success"].includes(view.latestJob.status) ? <div><p>商品同步：{hubSync?.message || "正在读取状态…"}{hubSync?.received > 0 ? `（成功 ${hubSync.succeeded} / ${hubSync.received}）` : ""}</p><PermissionGate permissions={session.permissions} action={ACTIONS.CONTENT_WRITE}><button className="secondary-button" type="button" onClick={handleRetryHubSync} disabled={hubRetrying || hubSync?.status === "syncing"}>{hubRetrying ? "同步中…" : "重新同步商品"}</button></PermissionGate></div> : null}<button className="secondary-button" type="button" onClick={handleExportLatestJob} disabled={isExporting}>导出结果</button></> : <p>创建任务后，可在这里查看处理状态和结果。</p>}
+        </section>
+      </section>
+    );
+  }
   function renderChatStep() {
     const runStages = workflowRun?.stages || [
       {
@@ -992,37 +1123,34 @@ export function App() {
           <div className="topbar-identity">
             <div className="brand-mark" aria-hidden="true" />
             <div className="topbar-title">
-              <p className="eyebrow">多Agent数字IP内容生成平台</p>
-              <h1>{workspaceMode === "ip" ? "数字 IP 创作" : "内容工作流"}</h1>
+              <p className="eyebrow">{workspaceMode === "ip" ? "多Agent数字IP内容生成平台" : "AI 内容创作平台"}</p>
+              <h1>{workspaceMode === "ip" ? "数字 IP 创作" : workspaceMode === "commerce" ? "商品批量内容" : "内容工作流"}</h1>
             </div>
           </div>
 
           <div className="workspace-switch" aria-label="工作区切换">
             <button type="button" className={workspaceMode === "ip" ? "is-active" : ""} onClick={() => setWorkspaceMode("ip")}>数字 IP 创作</button>
             <button type="button" className={workspaceMode === "content" ? "is-active" : ""} onClick={() => setWorkspaceMode("content")}>内容工作流</button>
+            <button type="button" className={workspaceMode === "commerce" ? "is-active" : ""} onClick={() => setWorkspaceMode("commerce")}>商品批量内容</button>
           </div>
 
           <div className="topbar-status" aria-label="当前状态">
             {workspaceMode === "ip" ? <span className="model-pill">工作流 <strong>4 个 Agent</strong></span> : <span className="model-pill">文本模型 <strong>agnes-2.5-flash</strong></span>}
-            {workspaceMode !== "ip" && <span className="system-status topbar-live">● 服务在线</span>}
-            {session.authMode !== "off" ? (
+            {workspaceMode === "content" && <span className="system-status topbar-live">● 服务在线</span>}
+            {session.authMode !== "off" && session.ready ? (
               session.token ? (
-                <button
-                  type="button"
-                  className="secondary-button session-signout"
-                  onClick={session.signOut}
-                  title={`角色：${session.roleCode || "无项目角色"}`}
-                >
-                  退出（{session.roleCode || "无角色"}）
-                </button>
+                <span className="session-role" title={`角色：${session.roleCode || "无项目角色"}`}>
+                  商家会话 · {session.roleCode || "无项目角色"}
+                </span>
               ) : (
-                <button
-                  type="button"
+                <a
                   className="secondary-button session-signin"
-                  onClick={() => setAuthPanelOpen((open) => !open)}
+                  href={MERCHANT_LOGIN_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
                 >
-                  {authPanelOpen ? "收起登录" : "登录"}
-                </button>
+                  通过云购商家后台登录
+                </a>
               )
             ) : null}
             <button
@@ -1037,13 +1165,12 @@ export function App() {
           </div>
         </header>
 
-        {authPanelOpen && session.authMode !== "off" && !session.token ? (
-          <AuthPanel
-            apiBaseUrl={apiBaseUrl}
+        {session.ready && session.authMode !== "off" && !session.token ? (
+          <MerchantLoginPrompt
             authMode={session.authMode}
-            onAuthenticated={() => {
-              setAuthPanelOpen(false);
-              setSuccessMessage("已登录");
+            onRefresh={async () => {
+              const nextToken = await session.refresh();
+              if (nextToken) setSuccessMessage("已接入云购商家会话");
             }}
           />
         ) : null}
@@ -1180,7 +1307,7 @@ export function App() {
           </div>
         ) : null}
 
-        <div className="main-content">{workspaceMode === "ip" ? <IPWorkspace /> : renderChatStep()}</div>
+        <div className="main-content">{workspaceMode === "ip" ? <IPWorkspace sessionReady={session.ready} /> : workspaceMode === "commerce" ? renderCommerceBatch() : renderChatStep()}</div>
       </div>
     </div>
   );

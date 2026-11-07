@@ -1,5 +1,7 @@
 # data-hub · 商品知识数据中心
 
+统一工作台可使用 PostgreSQL 存储商品知识，运行 Python 需要先安装本目录 `requirements.txt`。`HUB_DATABASE_URL` 指向目标 PostgreSQL；未配置时仍使用原 SQLite 过渡库。切换前在服务停止写入后运行 `migrate_sqlite_to_postgres.py --source <SQLite路径>`，目标商品和同步日志表必须为空，脚本会逐行核对并拒绝覆盖。迁移前备份并保留源文件，完成实际链路验证后再处理旧库。不要把数据库连接字符串写入日志或提交到仓库。
+
 内容平台与电商系统之间的唯一事实来源。零第三方依赖，Python 标准库 `http.server` + `sqlite3`。
 
 ## 启动
@@ -59,3 +61,5 @@ declare_name_cn  declare_name_en  declare_value  goods_type  hs_code  logistics_
 ```
 
 `tags` / `selling_points` 支持字符串自动切分，`faq` 支持 dict 或数组。
+
+`/hub/ingest` 的商品项可设置 `preserve_generated_copy: true`。对于已有商品，此标记保留原有的 `title_en`、`desc_en` 和 `declare_name_en`，即使请求中包含这三个字段也以已有值为准；其他字段仍按正常写入规则更新。新商品没有旧值可保留。不设置该标记时，沿用原来的完整替换行为，缺失字段不会自动保留。内容平台在当前任务没有生成文案时使用此标记，避免图片或视频任务清空已有文案。

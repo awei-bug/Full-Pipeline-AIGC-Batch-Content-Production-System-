@@ -30,18 +30,21 @@ const SECRET = "test-secret-at-least-16-chars";
 
 /* ---------------------------------------------------------------- 模式解析 */
 
-test("AUTH_MODE 默认 off（保持旧行为）", () => {
-  assert.equal(resolveAuthMode({}), "off");
+test("AUTH_MODE 默认 merchant（云购会话），不再默认 off", () => {
+  assert.equal(resolveAuthMode({}), "merchant");
+  assert.equal(resolveAuthMode({ AUTH_MODE: "" }), "merchant");
 });
 
-test("AUTH_MODE 识别 local / strict", () => {
+test("AUTH_MODE 识别 local / strict / off / merchant", () => {
   assert.equal(resolveAuthMode({ AUTH_MODE: "local" }), "local");
   assert.equal(resolveAuthMode({ AUTH_MODE: "STRICT" }), "strict");
+  assert.equal(resolveAuthMode({ AUTH_MODE: "off" }), "off");
+  assert.equal(resolveAuthMode({ AUTH_MODE: "merchant" }), "merchant");
 });
 
-test("非法 AUTH_MODE 回落 off，不抛错", () => {
-  assert.equal(resolveAuthMode({ AUTH_MODE: "prod" }), "off");
-  assert.equal(resolveAuthMode({ AUTH_MODE: "  " }), "off");
+test("非法 AUTH_MODE 回落到 merchant（fail-closed），不回落 off", () => {
+  assert.equal(resolveAuthMode({ AUTH_MODE: "prod" }), "merchant");
+  assert.equal(resolveAuthMode({ AUTH_MODE: "  " }), "merchant");
 });
 
 /* ---------------------------------------------------------------- token */
@@ -117,8 +120,8 @@ function fakeResponse() {
   return response;
 }
 
-test("off 模式下所有请求都解析为演示用户", () => {
-  const middleware = createIdentityMiddleware({ env: {} });
+test("off 模式（显式后门）下所有请求都解析为演示用户", () => {
+  const middleware = createIdentityMiddleware({ env: { AUTH_MODE: "off" } });
   const request = fakeRequest();
   let called = false;
   middleware(request, fakeResponse(), () => {
@@ -127,6 +130,18 @@ test("off 模式下所有请求都解析为演示用户", () => {
   assert.ok(called);
   assert.equal(request.identity.userId, DEMO_USER_ID);
   assert.equal(request.identity.kind, "demo");
+});
+
+test("默认模式（未配置统一身份）无 token 时返回 401，不回落到演示用户", () => {
+  const middleware = createIdentityMiddleware({ env: {} });
+  const response = fakeResponse();
+  let called = false;
+  middleware(fakeRequest(), response, () => {
+    called = true;
+  });
+  assert.equal(called, false);
+  assert.equal(response.state.statusCode, 401);
+  assert.equal(response.state.body.code, "UNAUTHORIZED");
 });
 
 test("local 模式无 token 时降级为匿名，不回落演示用户", () => {

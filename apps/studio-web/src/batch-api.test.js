@@ -87,6 +87,12 @@ test("buildFieldMapping 缺少名称字段时抛错", () => {
   );
 });
 
+test("buildFieldMapping 保留可同步的库存字段", () => {
+  const mapping = buildFieldMapping(["商品名称", "售价", "库存"]);
+  assert.equal(mapping.price, "售价");
+  assert.equal(mapping.stock, "库存");
+});
+
 test("sendChatMessage 原样提交文案对话消息", async () => {
   const originalFetch = globalThis.fetch;
   let observedRequest;

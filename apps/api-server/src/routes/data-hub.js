@@ -1,6 +1,8 @@
 import express from "express";
 
-import { ACTIONS, requirePlatformPermission } from "../lib/permissions.js";
+import { DEFAULT_AUTH_MODE } from "../lib/identity.js";
+import { ACTIONS, can, requirePlatformPermission } from "../lib/permissions.js";
+import { runTrackedHubSync } from "../services/hub-sync-tracker.js";
 
 export const dataHubRouter = express.Router();
 
@@ -11,6 +13,26 @@ export const dataHubRouter = express.Router();
 //   因此同样按发布权限（只给 owner）处理，而不是普通的生成权限。
 const requireHubIngest = requirePlatformPermission({ action: ACTIONS.PLATFORM_GENERATE });
 const requireHubPublish = requirePlatformPermission({ action: ACTIONS.CONTENT_PUBLISH });
+
+function jobScope(action = null) {
+  return async (request, response, next) => {
+    try {
+      if ((request.identityMode || DEFAULT_AUTH_MODE) !== "off" && (!request.identity || request.identity.kind === "anonymous")) {
+        return response.status(401).json({ code: "UNAUTHORIZED", message: "请先登录", data: null });
+      }
+      const job = await request.app.locals.contentJobsRepository.getJobById(request.params.jobId);
+      const batch = job && await request.app.locals.importBatchesRepository.getImportBatch(job.batchId);
+      if (!job || !batch) return response.status(404).json({ code: "NOT_FOUND", message: "任务不存在或无权访问", data: null });
+      if ((request.identityMode || DEFAULT_AUTH_MODE) !== "off" && batch.projectId) {
+        const role = await request.app.locals.projectsRepository.findMemberRole(batch.projectId, request.identity.userId);
+        if (!role) return response.status(404).json({ code: "NOT_FOUND", message: "任务不存在或无权访问", data: null });
+        if (action && !can(role, action).allowed) return response.status(403).json({ code: "FORBIDDEN", message: "当前角色无权同步商品", data: null });
+      }
+      request.hubJob = job;
+      return next();
+    } catch (error) { return next(error); }
+  };
+}
 
 function requireClient(request, response) {
   const client = request.app.locals.dataHubClient;
@@ -88,25 +110,22 @@ dataHubRouter.post("/search", async (request, response, next) => {
   }
 });
 
-dataHubRouter.post("/jobs/:jobId/ingest", requireHubIngest, async (request, response, next) => {
-  const client = requireClient(request, response);
-  if (!client) {
-    return;
-  }
-  const service = request.app.locals.dataHubSyncService;
-  if (!service) {
-    response.status(503).json({
-      code: "SERVICE_UNAVAILABLE",
-      message: "数据中心同步服务未启用",
-      data: null,
-    });
-    return;
+dataHubRouter.get("/jobs/:jobId/status", jobScope(), async (request, response, next) => {
+  try {
+    const state = await request.app.locals.hubSyncStatusRepository.get(request.params.jobId);
+    response.json({ code: "SUCCESS", message: "成功", data: state || { status: "unknown", message: "暂无同步记录" } });
+  } catch (error) { next(error); }
+});
+
+dataHubRouter.post("/jobs/:jobId/ingest", jobScope(ACTIONS.CONTENT_WRITE), requireHubIngest, async (request, response, next) => {
+  if (!["success", "partial_success"].includes(request.hubJob.status)) {
+    return response.status(409).json({ code: "JOB_NOT_READY", message: "任务尚未完成，不能同步", data: null });
   }
   try {
-    const result = await service.ingestJobContent({ jobId: request.params.jobId });
+    const result = await runTrackedHubSync({ jobId: request.params.jobId, service: request.app.locals.dataHubSyncService, statusRepository: request.app.locals.hubSyncStatusRepository });
     response.json({
       code: "SUCCESS",
-      message: `已入库 ${result.hub.okCount}/${result.hub.received} 条`,
+      message: result.message,
       data: result,
     });
   } catch (error) {
@@ -114,7 +133,7 @@ dataHubRouter.post("/jobs/:jobId/ingest", requireHubIngest, async (request, resp
   }
 });
 
-dataHubRouter.post("/jobs/:jobId/sync", requireHubPublish, async (request, response, next) => {
+dataHubRouter.post("/jobs/:jobId/sync", jobScope(ACTIONS.CONTENT_PUBLISH), requireHubPublish, async (request, response, next) => {
   const client = requireClient(request, response);
   if (!client) {
     return;

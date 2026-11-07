@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import { createZipWriter } from "../lib/zip-writer.js";
+import { marketingCopyByProduct } from "./marketing-copy-output.js";
 
 const MAX_PACK_BYTES = 28 * 1024 * 1024;
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
@@ -115,6 +116,7 @@ export function createListingPackService({ repository, assetsDir }) {
       const productIdByJobItem = new Map(
         jobItems.map((item) => [item.id, item.productId]),
       );
+      const marketingByProduct = marketingCopyByProduct(jobItems, outputs);
 
       const imagesByProduct = new Map();
       const imageUrlsByProduct = new Map();
@@ -236,9 +238,10 @@ export function createListingPackService({ repository, assetsDir }) {
           images: imagePaths,
           image_urls: imageUrlsByProduct.get(row.productId) || undefined,
           video_url: videoUrlsByProduct.get(row.productId) || undefined,
-          desc_en: String(row.marketingCopyTitle || "").slice(0, 2000),
+          desc_en: (marketingByProduct.get(row.productId)?.body || "").slice(0, 2000),
+          preserve_generated_copy: !marketingByProduct.has(row.productId),
           sell_points: String(normalized.sellingPoint || "").slice(0, 2000),
-          declare_name_en: String(row.marketingCopyTitle || "").slice(0, 128),
+          declare_name_en: String(marketingByProduct.has(row.productId) ? marketingByProduct.get(row.productId).title : row.marketingCopyTitle || "").slice(0, 128),
           declare_name_cn: name.slice(0, 128),
           goods_type: String(normalized.goodsType || "general").slice(0, 32),
           hs_code: String(normalized.hsCode || "").slice(0, 32) || undefined,

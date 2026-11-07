@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """商品知识数据中心 (data-hub)。
 
-零第三方依赖：标准库 http.server + sqlite3。
-职责：作为内容平台与电商系统之间的唯一事实来源。
+商品知识交换服务，支持 SQLite 过渡库和 PostgreSQL。
 
 契约要点
 - 身份：每条记录由 (tenant_slug, external_id) 唯一确定，写入幂等
@@ -19,6 +18,7 @@ import re
 import sqlite3
 import sys
 import threading
+from contextlib import nullcontext
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
@@ -35,6 +35,7 @@ DB_PATH = os.environ.get(
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "data-hub.db"),
 )
 HUB_TOKENS = os.environ.get("HUB_TOKENS", "")
+HUB_DATABASE_URL = os.environ.get("HUB_DATABASE_URL", "").strip()
 MAX_BODY = 12 * 1024 * 1024
 
 STATUSES = {"draft", "approved", "published", "archived"}
@@ -141,7 +142,30 @@ SCALAR_FIELDS = [
 ]
 
 
-def connect() -> sqlite3.Connection:
+class PostgresConnection:
+    """One DB-API facade for existing parameterized hub queries."""
+    def __init__(self, url):
+        import psycopg
+        from psycopg.rows import dict_row
+        self.conn = psycopg.connect(url, row_factory=dict_row)
+
+    def execute(self, query, params=None):
+        # Hub SQL uses positional placeholders exclusively; user values remain bound.
+        return self.conn.execute(query.replace('?', '%s'), params)
+
+    def transaction(self):
+        return self.conn.transaction()
+
+    def commit(self):
+        self.conn.commit()
+
+    def close(self):
+        self.conn.close()
+
+
+def connect():
+    if HUB_DATABASE_URL:
+        return PostgresConnection(HUB_DATABASE_URL)
     conn = sqlite3.connect(DB_PATH, timeout=15)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
@@ -153,7 +177,13 @@ def init_db() -> None:
     with WRITE_LOCK:
         conn = connect()
         try:
-            conn.executescript(SCHEMA)
+            if HUB_DATABASE_URL:
+                pg_schema = (SCHEMA.replace('INTEGER PRIMARY KEY AUTOINCREMENT', 'BIGSERIAL PRIMARY KEY')
+                             .replace('price REAL,', 'price DOUBLE PRECISION,')
+                             .replace('declare_value REAL,', 'declare_value DOUBLE PRECISION,'))
+                conn.execute(pg_schema)
+            else:
+                conn.executescript(SCHEMA)
             conn.commit()
         finally:
             conn.close()
@@ -347,11 +377,14 @@ def upsert_item(conn: sqlite3.Connection, tenant: str, raw: dict, source: str, j
         "logistics_note": (raw.get("logistics_note") or "").strip() or None,
     }
 
-    incoming_hash = content_hash_of(item)
     existing = conn.execute(
         "SELECT * FROM hub_products WHERE tenant_slug=? AND external_id=?",
         (tenant, external_id),
     ).fetchone()
+    if existing is not None and raw.get("preserve_generated_copy") is True:
+        for field in ("title_en", "desc_en", "declare_name_en"):
+            item[field] = existing[field]
+    incoming_hash = content_hash_of(item)
 
     ts = now_iso()
     if existing is None:
@@ -583,7 +616,7 @@ class Handler(BaseHTTPRequestHandler):
         qs = {k: v[0] for k, v in parse_qs(parsed.query).items()}
 
         if path == "/health":
-            return self._send(200, {"ok": True, "service": "data-hub", "db": DB_PATH, "time": now_iso()})
+            return self._send(200, {"ok": True, "service": "data-hub", "db": "postgresql" if HUB_DATABASE_URL else DB_PATH, "time": now_iso()})
 
         if not self._auth():
             return
@@ -692,12 +725,15 @@ class Handler(BaseHTTPRequestHandler):
             with WRITE_LOCK:
                 conn = connect()
                 try:
+                    if HUB_DATABASE_URL:
+                        conn.execute("SELECT pg_advisory_xact_lock(1481259851)")
                     for raw in items:
                         if not isinstance(raw, dict):
                             results.append({"ok": False, "action": "skipped", "message": "条目不是对象"})
                             continue
                         try:
-                            results.append(upsert_item(conn, tenant, raw, source, str(job_id)))
+                            with conn.transaction() if HUB_DATABASE_URL else nullcontext():
+                                results.append(upsert_item(conn, tenant, raw, source, str(job_id)))
                         except Exception as exc:
                             results.append({"external_id": raw.get("external_id"), "ok": False,
                                             "action": "error", "message": str(exc)})
@@ -745,6 +781,8 @@ class Handler(BaseHTTPRequestHandler):
             with WRITE_LOCK:
                 conn = connect()
                 try:
+                    if HUB_DATABASE_URL:
+                        conn.execute("SELECT pg_advisory_xact_lock(1481259851)")
                     row = conn.execute(
                         "SELECT id FROM hub_products WHERE tenant_slug=? AND external_id=?",
                         (tenant, external_id),
@@ -775,6 +813,8 @@ class Handler(BaseHTTPRequestHandler):
             with WRITE_LOCK:
                 conn = connect()
                 try:
+                    if HUB_DATABASE_URL:
+                        conn.execute("SELECT pg_advisory_xact_lock(1481259851)")
                     cur = conn.execute(
                         "UPDATE hub_products SET status=?, updated_at=? WHERE tenant_slug=? AND external_id=?",
                         (status, now_iso(), tenant, external_id),
@@ -791,7 +831,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     init_db()
-    print(f"[data-hub] db={DB_PATH}")
+    print(f"[data-hub] db={'postgresql' if HUB_DATABASE_URL else DB_PATH}")
     print(f"[data-hub] listening http://{HOST}:{PORT}")
     print(f"[data-hub] tokens={'configured' if token_map() else 'open (no HUB_TOKENS)'}")
     server = ThreadingHTTPServer((HOST, PORT), Handler)

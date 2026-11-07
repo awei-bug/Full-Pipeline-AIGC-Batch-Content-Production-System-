@@ -1,5 +1,11 @@
 # AI 内容协作平台（数字 IP / 跨境商业内容）
 
+工作区切换提供「商品批量内容」入口，可导入商品、创建批量任务并查看结果；库存列支持识别。完成任务会尝试将商品知识同步到 data-hub，页面展示最近一次同步状态并提供重试，商品行显示可供跨境运营系统核对的商品 ID。自动同步失败不会使生成任务失败。PostgreSQL 部署需应用 `infra/sql/010_hub_sync_status.sql`；内存模式的状态不会跨重启保留。三系统联调步骤见上级目录 `电商垂类整合计划/三个电商系统联调说明.md`。
+
+成功生成的 Listing 标题和正文分别同步到商品知识的 `title_en` 和 `desc_en`；没有生成文案的任务不会清空已有文案。生成内容在发布前需要人工核对。
+
+素材访问：`AUTH_MODE=off` 的本地演示仍使用 `/storage/assets/`；`local` 或 `strict` 模式关闭该公开目录，批量任务中关联的本地图片、视频可通过携带登录 Bearer token 的 `GET /api/content-jobs/{jobId}/assets/{filename}` 读取，服务端检查项目成员权限与任务产出关联。商品批量结果已接入此接口并支持预览；仅接受本服务生成的本地素材地址。未分配批次仍遵循现有共享规则。IP 和内容工作流素材尚未接入认证接口，认证模式下暂无法通过原链接预览；外部素材链接及服务级 data-hub 不在此保护范围内。
+
 默认工作区面向数字 IP 和游戏内容团队，支持世界观设定下多章节批量创作：
 LangGraph 四节点（调研、撰写、润色、审核）、工具调用、批次轮询、章节恢复。
 技术实现、Redis Stack 配置及能力边界见 [编排器说明](apps/ai-orchestrator/README.md)。
@@ -440,9 +446,9 @@ apps/
   api-server/         Node + Express API 服务
   ai-orchestrator/    FastAPI + LangGraph 编排服务（多智能体协作层 + 四项增强层）
   data-hub/           商品知识数据服务
-  commerce-api/       暂存的独立站实验代码，不参与主链路
-  seller-admin/       暂存的独立站实验代码，不参与主链路
-  storefront/         暂存的独立站实验代码，不参与主链路
+  commerce-api/       已移除（2026-10 归档；12 张表全空，从未参与主链路）
+  seller-admin/       已移除（2026-10 归档）
+  storefront/         已移除（2026-10 归档）
 
 data/                 JSON 兜底数据（未配 PostgreSQL 时使用）
 db/                   早期 Postgres 初始化脚本
@@ -655,7 +661,7 @@ npm run stack:smoke:image
 
 获客活动、推广链接、商城转化回调与归因统计已从内容平台移除；商城交易由独立项目负责。
 
-仓库中 `commerce-api`、`seller-admin`、`storefront` 仍属于暂存的独立站实验代码，不参与主链路；正式商城在 `F:\Python_code\Flask项目`。
+仓库中 `commerce-api`、`seller-admin`、`storefront` 已于 2026-10 归档移除（其 `commerce.*` schema 12 张表经核查全为 0 行，从未参与主链路）；正式商城在 `F:\Python_code\云购多租户电商 SaaS 平台`。
 
 当前阶段更值得做的是：
 

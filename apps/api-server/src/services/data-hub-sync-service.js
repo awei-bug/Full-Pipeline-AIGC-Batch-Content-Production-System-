@@ -1,3 +1,5 @@
+import { marketingCopyByProduct } from "./marketing-copy-output.js";
+
 const HUB_ID_PREFIX = "cc";
 
 function splitPoints(value) {
@@ -69,6 +71,7 @@ export function toHubItem(product, index, jobId) {
     faq: Array.isArray(product?.faq) ? product.faq : undefined,
     desc_zh: String(product?.introduce || "").slice(0, 4000) || undefined,
     desc_en: String(product?.desc_en || "").slice(0, 4000) || undefined,
+    preserve_generated_copy: product?.preserve_generated_copy === true,
     images: images.slice(0, 8),
     video_url: product?.video_url || undefined,
     declare_name_cn: String(product?.declare_name_cn || product?.name || "").slice(0, 128) || undefined,
@@ -80,13 +83,14 @@ export function toHubItem(product, index, jobId) {
   };
 }
 
-function buildContentItem(row, normalized, images, videoUrl, jobId) {
+function buildContentItem(row, normalized, images, videoUrl, jobId, generatedCopy) {
   const name = String(row?.productName || normalized?.name || "").trim();
   if (!name) {
     return null;
   }
   const sellingPoint = String(normalized?.sellingPoint || "").trim();
   const scenario = String(normalized?.scenario || "").trim();
+  const generatedTitle = generatedCopy ? generatedCopy.title : String(row?.marketingCopyTitle || "");
   const introduce = [sellingPoint, scenario ? `适用场景：${scenario}` : ""]
     .filter(Boolean)
     .join("。")
@@ -96,7 +100,7 @@ function buildContentItem(row, normalized, images, videoUrl, jobId) {
     external_id: `cc-${row.productId || name}`,
     title: name.slice(0, 128),
     subtitle: sellingPoint.split(/[\n;；]/)[0]?.slice(0, 120) || undefined,
-    title_en: String(row?.marketingCopyTitle || "").slice(0, 128) || undefined,
+    title_en: generatedTitle.slice(0, 128) || undefined,
     price: toNumberOrNull(normalized?.price),
     stock: toNumberOrNull(normalized?.stock ?? normalized?.number),
     category: normalized?.category || undefined,
@@ -107,11 +111,12 @@ function buildContentItem(row, normalized, images, videoUrl, jobId) {
     spec: normalized?.spec || normalized?.attributes || undefined,
     faq: Array.isArray(normalized?.faq) ? normalized.faq : undefined,
     desc_zh: introduce.slice(0, 4000) || undefined,
-    desc_en: String(row?.marketingCopyTitle || "").slice(0, 4000) || undefined,
+    desc_en: generatedCopy?.body?.slice(0, 4000) || undefined,
+    preserve_generated_copy: !generatedCopy,
     images: (images || []).slice(0, 8),
     video_url: videoUrl || undefined,
     declare_name_cn: name.slice(0, 128),
-    declare_name_en: String(row?.marketingCopyTitle || "").slice(0, 128) || undefined,
+    declare_name_en: generatedTitle.slice(0, 128) || undefined,
     goods_type: normalized?.goodsType || "general",
     hs_code: normalized?.hsCode || undefined,
     source_job_id: jobId,
@@ -165,6 +170,7 @@ export function createDataHubSyncService({ listingPackService, dataHubClient, re
       const productIdByJobItem = new Map(jobItems.map((item) => [item.id, item.productId]));
       const imagesByProduct = new Map();
       const videoByProduct = new Map();
+      const marketingByProduct = marketingCopyByProduct(jobItems, outputs);
 
       for (const output of outputs || []) {
         const productId = productIdByJobItem.get(output.jobItemId);
@@ -186,14 +192,17 @@ export function createDataHubSyncService({ listingPackService, dataHubClient, re
       }
 
       const items = [];
-      const skipped = [];
+      const successfulProducts = new Set(jobItems.filter((item) => item.status === "success").map((item) => item.productId));
+      const skipped = jobItems.filter((item) => item.status !== "success").map((item) => ({ productId: item.productId, reason: "任务未成功" }));
       for (const row of rows || []) {
+        if (!successfulProducts.has(row.productId)) continue;
         const item = buildContentItem(
           row,
           productById.get(row.productId) || {},
           imagesByProduct.get(row.productId) || [],
           videoByProduct.get(row.productId),
           normalizedJobId,
+          marketingByProduct.get(row.productId),
         );
         if (item) {
           items.push(item);
@@ -209,6 +218,9 @@ export function createDataHubSyncService({ listingPackService, dataHubClient, re
       }
 
       const ingested = await dataHubClient.ingest({ items, jobId: normalizedJobId });
+      if (!ingested || !Number.isInteger(ingested.received) || !Number.isInteger(ingested.ok_count) || !Number.isInteger(ingested.error_count) || ingested.received !== items.length || ingested.ok_count < 0 || ingested.error_count < 0 || ingested.ok_count + ingested.error_count !== ingested.received) {
+        throw new Error("数据中心返回的同步结果无效");
+      }
 
       return {
         jobId: normalizedJobId,

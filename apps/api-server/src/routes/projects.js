@@ -1,8 +1,14 @@
 import express from "express";
 
 import { writableUserId } from "../lib/identity.js";
+import { ACTIONS, requireMerchantAction } from "../lib/permissions.js";
 
 export const projectsRouter = express.Router();
+
+// 项目列表与创建没有"项目 id"可查，因此不走项目级守卫；但"能不能看项目/建项目"
+// 仍要受云购动作码约束——只有 product:read 的员工不该能建项目。
+const requireProjectRead = requireMerchantAction(ACTIONS.PROJECT_READ);
+const requireProjectWrite = requireMerchantAction(ACTIONS.PROJECT_WRITE);
 
 /**
  * 项目列表。
@@ -11,7 +17,7 @@ export const projectsRouter = express.Router();
  * 其余模式下按 request.identity 过滤，实现用户隔离；匿名只能拿到空列表——
  * 匿名不写库（见 createIdentityMiddleware），自然也没有项目属于它。
  */
-projectsRouter.get("/", async (request, response, next) => {
+projectsRouter.get("/", requireProjectRead, async (request, response, next) => {
   try {
     const identity = request.identity;
     const ownerUserId =
@@ -31,7 +37,7 @@ projectsRouter.get("/", async (request, response, next) => {
   }
 });
 
-projectsRouter.post("/", async (request, response, next) => {
+projectsRouter.post("/", requireProjectWrite, async (request, response, next) => {
   try {
     const name = String(request.body?.name || "").trim();
     const description = String(request.body?.description || "").trim() || null;

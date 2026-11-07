@@ -244,9 +244,9 @@ npm run modelscope:probe-video -- --poll-seconds 0 --models "Wan-AI/Wan2.1-T2V-1
 三个已经修复的坑，改动启动脚本时不要回退：
 
 - `Start-Process -ArgumentList` 会把数组按空格拼接，且**不自动给元素加引号**。
-  仓库根目录 `内容生成 Multi-Agent 协同编排系统` 含空格，`-File` 的脚本路径会被截断成
+  旧仓库目录 `内容生成 Multi-Agent 协同编排系统` 含空格，`-File` 的脚本路径曾被截断成
   `F:\Python_code\内容生成`，子进程报"该文件不具有 .ps1 扩展名"后立即退出。
-  现在的写法是传入手工拼好的单一参数字符串，并自行给路径加引号。
+  当前目录已改为 `电商智能内容生成与商品知识平台`；为兼容安装路径中的空格，仍传入手工拼好的单一参数字符串，并自行给路径加引号。
 - `scripts/*.ps1` 与根目录 `dev.ps1` 都是**无 BOM 的 UTF-8**，Windows PowerShell 5.1 会按
   系统 ANSI（GBK）解码。这些文件因此必须保持纯 ASCII；需要中文时用 `[char]0x...`
   拼接（`dev.ps1` 里的 shop 路径已有先例），不要直接写中文注释或中文字符串。
