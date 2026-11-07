@@ -25,7 +25,7 @@ python apps/data-hub/app.py
 | `HUB_HOST` | `127.0.0.1` | 监听地址 |
 | `HUB_PORT` | `8120` | 端口 |
 | `HUB_DB_PATH` | `apps/data-hub/data-hub.db` | SQLite 路径 |
-| `HUB_TOKENS` | 空 | `slug1:token1,slug2:token2`；留空免鉴权，仅限本机 |
+| `HUB_TOKENS` | 空 | `slug1:token1,slug2:token2`；留空时所有受保护端点一律 401（fail-closed）。令牌必须与 `X-Hub-Tenant` 指定的租户一致 |
 
 ## 接口
 

@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -21,7 +22,7 @@ import threading
 from contextlib import nullcontext
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, unquote
 
 try:
     sys.stdout.reconfigure(encoding="utf-8")
@@ -58,16 +59,34 @@ def token_map() -> dict:
 
 
 def authorized(handler) -> bool:
+    """fail-closed：令牌必须配置，且必须与 X-Hub-Tenant 指定的租户一一对应。
+
+    旧实现允许「任意租户的令牌访问任意租户的数据」(header in values())，
+    且未配置令牌时全开放，两者都会造成跨租户读写。
+    """
     tokens = token_map()
     if not tokens:
-        return True
+        return False
     header = handler.headers.get("X-Hub-Token") or ""
     if not header and handler.headers.get("Authorization", "").startswith("Bearer "):
         header = handler.headers.get("Authorization")[7:]
     tenant = handler.headers.get("X-Hub-Tenant") or ""
-    if tenant and tenant in tokens:
-        return tokens[tenant] == header
-    return header in tokens.values()
+    if not tenant or tenant not in tokens:
+        return False
+    return hmac.compare_digest(str(tokens[tenant]), str(header))
+
+
+def target_tenant(path: str, body: dict | None = None, qs: dict | None = None) -> str:
+    """解析本次操作真正要访问的租户，用于和令牌所属租户比对。"""
+    parts = [part for part in path.split("/") if part]
+    if len(parts) >= 3 and parts[0] == "hub" and parts[1] == "products":
+        return unquote(parts[2])
+    for key in ("tenant_slug", "tenant"):
+        value = (body or {}).get(key)
+        if isinstance(value, str) and value:
+            return value
+    value = (qs or {}).get("tenant")
+    return value if isinstance(value, str) else ""
 
 
 # ---------------------------------------------------------------- schema
@@ -610,6 +629,13 @@ class Handler(BaseHTTPRequestHandler):
             return False
         return True
 
+    def _check_tenant(self, target: str) -> bool:
+        claimed = self.headers.get("X-Hub-Tenant") or ""
+        if target and claimed and target != claimed:
+            self._send(403, {"ok": False, "error": "tenant mismatch"})
+            return False
+        return True
+
     def do_GET(self):
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/") or "/"
@@ -619,6 +645,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, {"ok": True, "service": "data-hub", "db": "postgresql" if HUB_DATABASE_URL else DB_PATH, "time": now_iso()})
 
         if not self._auth():
+            return
+        if not self._check_tenant(target_tenant(path, {}, qs)):
             return
 
         if path == "/hub/stats":
@@ -711,6 +739,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(400, {"ok": False, "error": str(exc)})
         except Exception as exc:
             return self._send(400, {"ok": False, "error": f"invalid json: {exc}"})
+
+        # body 里的 tenant_slug 或路径里的租户不得越过令牌所属租户。
+        if not self._check_tenant(target_tenant(path, body, {})):
+            return
 
         if path == "/hub/ingest":
             tenant = body.get("tenant_slug") or self.headers.get("X-Hub-Tenant") or ""
@@ -833,7 +865,7 @@ def main():
     init_db()
     print(f"[data-hub] db={'postgresql' if HUB_DATABASE_URL else DB_PATH}")
     print(f"[data-hub] listening http://{HOST}:{PORT}")
-    print(f"[data-hub] tokens={'configured' if token_map() else 'open (no HUB_TOKENS)'}")
+    print(f"[data-hub] tokens={'configured' if token_map() else 'NOT CONFIGURED (protected endpoints return 401)'}")
     server = ThreadingHTTPServer((HOST, PORT), Handler)
     try:
         server.serve_forever()

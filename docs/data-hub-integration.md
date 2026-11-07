@@ -105,7 +105,7 @@ powershell -ExecutionPolicy Bypass -File scripts/stop-data-hub.ps1
 | `DATA_HUB_TOKEN` | `hub-local-token` | 与 HUB_TOKENS 中该租户的值一致 |
 | `DATA_HUB_TENANT_SLUG` | `demo` | 租户标识 |
 
-服务端另有 `HUB_PORT`（默认 8120）与 `HUB_TOKENS`（格式 `slug1:token1,slug2:token2`，留空则免鉴权，仅限本机开发）。
+服务端另有 `HUB_PORT`（默认 8120）与 `HUB_TOKENS`（格式 `slug1:token1,slug2:token2`）。留空时服务以 fail-closed 模式运行，所有受保护端点返回 401；请求须同时带 `X-Hub-Tenant` 与匹配该租户的令牌，请求体或路径里的租户不得越过令牌所属租户。
 
 ## 五、API 契约
 
