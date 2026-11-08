@@ -20,6 +20,7 @@ import {
   getContentWorkflow,
   getHubSyncStatus,
   retryHubSync,
+  listInventoryDrafts,
 } from "./batch-api.js";
 import { deriveBatchWorkspaceView, shouldPollContentJob } from "./batch-view-model.js";
 import { EmptyCanvas, FlowNodes } from "./Illustrations.jsx";
@@ -287,6 +288,9 @@ export function App() {
   const [packPublish, setPackPublish] = useState(false);
   const [commercePush, setCommercePush] = useState({ configured: false, tenantSlug: "" });
   const [pushResult, setPushResult] = useState(null);
+  const [inventoryDrafts, setInventoryDrafts] = useState([]);
+  const [inventoryDraftsError, setInventoryDraftsError] = useState("");
+  const [isLoadingInventoryDrafts, setIsLoadingInventoryDrafts] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
   const [hubSync, setHubSync] = useState(null);
@@ -373,6 +377,30 @@ export function App() {
       workspaceRequestIdRef.current += 1;
     };
   }, [session.ready]);
+
+  /** 库存联动草稿：会话就绪后才读，失败只影响本区块。 */
+  async function refreshInventoryDrafts() {
+    setIsLoadingInventoryDrafts(true);
+    setInventoryDraftsError("");
+    try {
+      setInventoryDrafts(await listInventoryDrafts({ limit: 20 }));
+    } catch (error) {
+      setInventoryDraftsError(error.message || "库存草稿读取失败");
+    } finally {
+      setIsLoadingInventoryDrafts(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!session.ready || !session.token) return undefined;
+    let active = true;
+    setIsLoadingInventoryDrafts(true);
+    listInventoryDrafts({ limit: 20 })
+      .then((items) => { if (active) setInventoryDrafts(items); })
+      .catch((error) => { if (active) setInventoryDraftsError(error.message || "库存草稿读取失败"); })
+      .finally(() => { if (active) setIsLoadingInventoryDrafts(false); });
+    return () => { active = false; };
+  }, [session.ready, session.token]);
 
   useEffect(() => {
     if (!workflowRun?.id || ["success", "partial_success", "failed"].includes(workflowRun.status)) {
@@ -916,6 +944,24 @@ export function App() {
         <section className="commerce-batch-section commerce-results" aria-live="polite">
           <h3>任务结果</h3>
           {hasJob ? <><p>任务状态：{latestStatusLabel} · 进度 {latestProgress}%</p>{view.latestOutputCards.map((item) => <article key={item.id}><strong>{item.typeLabel} · {item.sourceLabel}</strong><p>{item.content || item.previewText}</p>{(item.imageUrl || item.videoUrl) && <ProtectedBatchAsset jobId={view.latestJob.id} url={item.imageUrl || item.videoUrl} type={item.type} authMode={session.authMode} token={session.token} ready={session.ready} />}</article>)}{["success", "partial_success"].includes(view.latestJob.status) ? <div><p>商品同步：{hubSync?.message || "正在读取状态…"}{hubSync?.received > 0 ? `（成功 ${hubSync.succeeded} / ${hubSync.received}）` : ""}</p><PermissionGate permissions={session.permissions} action={ACTIONS.CONTENT_WRITE}><button className="secondary-button" type="button" onClick={handleRetryHubSync} disabled={hubRetrying || hubSync?.status === "syncing"}>{hubRetrying ? "同步中…" : "重新同步商品"}</button></PermissionGate></div> : null}<button className="secondary-button" type="button" onClick={handleExportLatestJob} disabled={isExporting}>导出结果</button></> : <p>创建任务后，可在这里查看处理状态和结果。</p>}
+        </section>
+        <section className="commerce-batch-section commerce-results" aria-live="polite">
+          <h3>库存联动补货草稿</h3>
+          <p>内容平台消费云购 stock.changed 事件生成，按 event_id 幂等；回推数据中心的运营提示只进 ops_note，不进入 C 端商品介绍。</p>
+          <button className="secondary-button" type="button" onClick={refreshInventoryDrafts} disabled={isLoadingInventoryDrafts}>{isLoadingInventoryDrafts ? "读取中…" : "刷新草稿"}</button>
+          {inventoryDraftsError ? <p>{inventoryDraftsError}</p> : null}
+          {inventoryDrafts.length ? (
+            <ul className="commerce-product-list">
+              {inventoryDrafts.map((draft) => (
+                <li key={draft.id}>
+                  <strong>{draft.title}</strong>
+                  <span>商品：{draft.itemTitle} · 库存 {draft.stockAfter} · 事件 {draft.eventId} · 回推 {draft.hubStatus}</span>
+                  <span>{draft.body}</span>
+                  <span>{draft.createdAt}</span>
+                </li>
+              ))}
+            </ul>
+          ) : <p>{isLoadingInventoryDrafts ? "正在读取…" : "暂无草稿。在云购下单扣减库存后，这里会自动出现记录。"}</p>}
         </section>
       </section>
     );

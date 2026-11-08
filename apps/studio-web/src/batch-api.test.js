@@ -8,6 +8,7 @@ import {
   parseImportFile,
   sendChatMessage,
   startContentWorkflow,
+  listInventoryDrafts,
 } from "./batch-api.js";
 
 test("parseImportFile 可以解析 csv 文件为表头和产品行", async () => {
@@ -152,6 +153,42 @@ test("startContentWorkflow 原样提交最终确认文案", async () => {
 
     assert.deepEqual(observedPayload, payload);
     assert.equal(result.id, "cw_test");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("listInventoryDrafts 读取草稿列表并携带 limit 与鉴权头", async () => {
+  const originalFetch = globalThis.fetch;
+  let observedRequest;
+  globalThis.fetch = async (url, options) => {
+    observedRequest = { url, options };
+    return new Response(JSON.stringify({
+      code: "SUCCESS",
+      data: { items: [{ id: 1, eventId: 35, title: "补货提醒", hubStatus: "pushed" }], total: 1 },
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  };
+
+  try {
+    const items = await listInventoryDrafts({ limit: 5 });
+    assert.equal(items.length, 1);
+    assert.equal(items[0].eventId, 35);
+    assert.match(observedRequest.url, /\/api\/inventory-drafts\?limit=5$/);
+    assert.equal(observedRequest.options.headers["Content-Type"], "application/json");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("listInventoryDrafts 在后端返回空结构时退化为空数组", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    code: "SUCCESS",
+    data: null,
+  }), { status: 200, headers: { "Content-Type": "application/json" } });
+
+  try {
+    assert.deepEqual(await listInventoryDrafts(), []);
   } finally {
     globalThis.fetch = originalFetch;
   }

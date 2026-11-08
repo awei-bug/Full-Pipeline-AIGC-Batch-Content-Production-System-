@@ -251,6 +251,15 @@ export async function getContentWorkflow(workflowId) {
   return request(`/api/content-workflows/${encodeURIComponent(workflowId)}`);
 }
 
+/**
+ * 库存联动补货草稿：由 content-drafts 消费云购 stock.changed 事件生成。
+ * 只读接口，页面不提供手工写入口，避免出现第二个未经事件驱动的数据源。
+ */
+export async function listInventoryDrafts({ limit = 20 } = {}) {
+  const data = await request(`/api/inventory-drafts?limit=${encodeURIComponent(limit)}`);
+  return Array.isArray(data?.items) ? data.items : [];
+}
+
 export async function listImportBatches() {
   const result = await request("/api/import-batches");
   return result.items || [];
