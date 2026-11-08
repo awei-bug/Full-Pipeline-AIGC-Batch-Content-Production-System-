@@ -119,6 +119,7 @@ CREATE TABLE IF NOT EXISTS hub_products (
   goods_type TEXT DEFAULT 'general',
   hs_code TEXT,
   logistics_note TEXT,
+  ops_note TEXT,
   status TEXT DEFAULT 'draft',
   source TEXT,
   source_job_id TEXT,
@@ -192,6 +193,21 @@ def connect():
     return conn
 
 
+def migrate_schema(conn) -> None:
+    """给已有库补列。
+
+    CREATE TABLE IF NOT EXISTS 不会改动已存在的表，因此新增列必须单独迁移。
+    ops_note 是运营侧提示，独立于 desc_zh（顾客可见的商品介绍）：
+    早期版本把补货草稿拼在 desc_zh 尾部，会污染 C 端商品详情。
+    """
+    if HUB_DATABASE_URL:
+        conn.execute("ALTER TABLE hub_products ADD COLUMN IF NOT EXISTS ops_note TEXT")
+        return
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(hub_products)")}
+    if "ops_note" not in columns:
+        conn.execute("ALTER TABLE hub_products ADD COLUMN ops_note TEXT")
+
+
 def init_db() -> None:
     with WRITE_LOCK:
         conn = connect()
@@ -203,6 +219,7 @@ def init_db() -> None:
                 conn.execute(pg_schema)
             else:
                 conn.executescript(SCHEMA)
+            migrate_schema(conn)
             conn.commit()
         finally:
             conn.close()
@@ -319,6 +336,8 @@ def content_hash_of(item: dict) -> str:
         "goods_type": item.get("goods_type"),
         "hs_code": item.get("hs_code"),
         "logistics_note": item.get("logistics_note"),
+        # 运营提示变化也要推进 version，否则下游增量同步感知不到这条更新。
+        "ops_note": item.get("ops_note"),
     }
     raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
@@ -352,6 +371,7 @@ def row_to_record(row: sqlite3.Row) -> dict:
         "goods_type": row["goods_type"] or "general",
         "hs_code": row["hs_code"],
         "logistics_note": row["logistics_note"],
+        "ops_note": row["ops_note"],
         "status": row["status"],
         "source": row["source"],
         "source_job_id": row["source_job_id"],
@@ -394,6 +414,7 @@ def upsert_item(conn: sqlite3.Connection, tenant: str, raw: dict, source: str, j
         "goods_type": (raw.get("goods_type") or "general").strip() or "general",
         "hs_code": (raw.get("hs_code") or "").strip() or None,
         "logistics_note": (raw.get("logistics_note") or "").strip() or None,
+        "ops_note": (raw.get("ops_note") or "").strip() or None,
     }
 
     existing = conn.execute(
@@ -415,9 +436,10 @@ def upsert_item(conn: sqlite3.Connection, tenant: str, raw: dict, source: str, j
             (tenant_slug, external_id, title, subtitle, title_en, price, currency, stock,
              category, brand, tags_json, selling_points_json, scenario, spec_json, faq_json,
              desc_zh, desc_en, images_json, video_url, declare_name_cn, declare_name_en,
-             declare_value, goods_type, hs_code, logistics_note, status, source, source_job_id,
+             declare_value, goods_type, hs_code, logistics_note, ops_note,
+             status, source, source_job_id,
              content_hash, version, published_product_id, created_at, updated_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 tenant, external_id, item["title"], item["subtitle"], item["title_en"],
                 item["price"], item["currency"], item["stock"], item["category"], item["brand"],
@@ -425,7 +447,8 @@ def upsert_item(conn: sqlite3.Connection, tenant: str, raw: dict, source: str, j
                 dumps(item["spec"]), dumps(item["faq"]), item["desc_zh"], item["desc_en"],
                 dumps(item["images"]), item["video_url"], item["declare_name_cn"],
                 item["declare_name_en"], item["declare_value"], item["goods_type"],
-                item["hs_code"], item["logistics_note"], status, source, job_id,
+                item["hs_code"], item["logistics_note"], item["ops_note"],
+                status, source, job_id,
                 incoming_hash, version, published_product_id, ts, ts,
             ),
         )
@@ -458,7 +481,7 @@ def upsert_item(conn: sqlite3.Connection, tenant: str, raw: dict, source: str, j
                 title=?, subtitle=?, title_en=?, price=?, currency=?, stock=?, category=?, brand=?,
                 tags_json=?, selling_points_json=?, scenario=?, spec_json=?, faq_json=?,
                 desc_zh=?, desc_en=?, images_json=?, video_url=?, declare_name_cn=?, declare_name_en=?,
-                declare_value=?, goods_type=?, hs_code=?, logistics_note=?,
+                declare_value=?, goods_type=?, hs_code=?, logistics_note=?, ops_note=?,
                 status=?, source=?, source_job_id=?, content_hash=?, version=?, updated_at=?
                WHERE id=?""",
             (
@@ -468,7 +491,7 @@ def upsert_item(conn: sqlite3.Connection, tenant: str, raw: dict, source: str, j
                 dumps(item["faq"]), item["desc_zh"], item["desc_en"], dumps(item["images"]),
                 item["video_url"], item["declare_name_cn"], item["declare_name_en"],
                 item["declare_value"], item["goods_type"], item["hs_code"], item["logistics_note"],
-                status, source, job_id, incoming_hash, version, ts, existing["id"],
+                item["ops_note"], status, source, job_id, incoming_hash, version, ts, existing["id"],
             ),
         )
         action = "updated"

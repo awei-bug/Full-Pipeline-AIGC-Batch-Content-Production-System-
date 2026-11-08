@@ -92,28 +92,33 @@ export function buildDraft(event, { threshold = DEFAULT_THRESHOLD } = {}) {
   };
 }
 
-/** 草稿写回数据中心时的标记，用于同一商品的重复草稿覆盖而不是无限追加。 */
+/** 早期版本把运营提示拼在 desc_zh 尾部，回写时用于剥除历史遗留。 */
 export const DRAFT_MARKER = "【运营提示】";
-const STOCK_POINT_PREFIX = "库存提示：";
+const LEGACY_STOCK_POINT_PREFIX = "库存提示：";
 
 /**
  * 把草稿合并进数据中心返回的商品记录。
  *
- * 数据中心 ingest 是整条覆盖语义，所以必须先读后写；只替换 desc_zh 的
- * 运营提示段与库存卖点，其余字段原样带回，避免把价格、图片、规格冲成空。
+ * 运营提示写进独立的 ops_note 字段，不再进入 desc_zh / selling_points：
+ * 那两个字段会同步到商城 C 端商品详情与卖点，属于顾客可见内容。
+ *
+ * 数据中心 ingest 是整条覆盖语义，所以必须先读后写；只改 ops_note，
+ * 并顺带剥掉早期版本留在 desc_zh / selling_points 里的历史文本（幂等）。
  */
 export function mergeDraftIntoHubItem(record, draft) {
-  const baseDesc = String(record.desc_zh || "").split(DRAFT_MARKER)[0].trim();
-  const desc = `${baseDesc}${baseDesc ? " " : ""}${DRAFT_MARKER}${draft.body}`.slice(0, 4000);
+  const cleanDesc = String(record.desc_zh || "")
+    .split(DRAFT_MARKER)[0]
+    .trim()
+    .slice(0, 4000);
   const points = (Array.isArray(record.selling_points) ? record.selling_points : [])
     .map((point) => String(point || "").trim())
-    .filter((point) => point && !point.startsWith(STOCK_POINT_PREFIX));
-  points.push(`${STOCK_POINT_PREFIX}当前仅剩 ${draft.stockAfter} 件`);
+    .filter((point) => point && !point.startsWith(LEGACY_STOCK_POINT_PREFIX));
 
   return {
     ...record,
-    desc_zh: desc,
+    desc_zh: cleanDesc || null,
     selling_points: points.slice(-10),
+    ops_note: `${DRAFT_MARKER}${draft.body}`.slice(0, 2000),
     // 标题/英文描述的生成内容不属于本次改动，交给数据中心保留。
     preserve_generated_copy: true,
     source_job_id: `inventory-draft:${draft.eventId}`,

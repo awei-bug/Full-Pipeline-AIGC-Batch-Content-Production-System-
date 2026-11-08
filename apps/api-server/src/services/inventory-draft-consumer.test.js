@@ -159,14 +159,14 @@ test("草稿带上数据中心商品标识", () => {
   assert.equal(draft.externalId, "yg-1-1");
 });
 
-test("合并草稿只改运营提示与库存卖点，其余字段原样保留", () => {
+test("合并草稿把运营提示放进独立字段，并清除顾客可见字段的历史污染", () => {
   const record = {
     external_id: "yg-1-1",
     title: "榨汁杯",
     price: 129,
     stock: 4,
     images: ["http://img/1.png"],
-    desc_zh: `原描述 ${DRAFT_MARKER}旧的提示，应当被替换`,
+    desc_zh: `原描述 ${DRAFT_MARKER}旧的提示，应当被剥除`,
     selling_points: ["380ml 容量", "库存提示：当前仅剩 9 件"],
     status: "approved",
   };
@@ -180,10 +180,11 @@ test("合并草稿只改运营提示与库存卖点，其余字段原样保留",
   assert.deepEqual(merged.images, ["http://img/1.png"]);
   assert.equal(merged.status, "approved");
   assert.equal(merged.preserve_generated_copy, true);
-  assert.ok(merged.desc_zh.startsWith("原描述"));
-  assert.equal(merged.desc_zh.split(DRAFT_MARKER).length, 2, "旧提示必须被替换而不是叠加");
-  assert.match(merged.desc_zh, /仅剩 4 件/);
-  assert.deepEqual(merged.selling_points, ["380ml 容量", "库存提示：当前仅剩 4 件"]);
+  assert.equal(merged.desc_zh, "原描述", "desc_zh 不得残留运营提示");
+  assert.deepEqual(merged.selling_points, ["380ml 容量"], "卖点不得残留库存提示");
+  assert.equal(merged.ops_note, `${DRAFT_MARKER}仅剩 4 件，建议改为预约口径。`);
+  // 原始记录不被就地修改，避免调用方拿着脏数据做别的事。
+  assert.match(record.desc_zh, /旧的提示/);
 });
 
 test("有标识时把草稿回推数据中心", async () => {
@@ -194,7 +195,7 @@ test("有标识时把草稿回推数据中心", async () => {
       return { external_id: externalId, title: "榨汁杯", desc_zh: "原描述", selling_points: [] };
     },
     async ingest({ items, jobId, source }) {
-      calls.push(["ingest", jobId, source, items[0].desc_zh]);
+      calls.push(["ingest", jobId, source, items[0].ops_note]);
       return { ok: true };
     },
   };
